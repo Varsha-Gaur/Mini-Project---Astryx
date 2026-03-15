@@ -1,406 +1,523 @@
 """
-dashboard/dashboard.py
-========================
-SecureGrid Research Dashboard
--------------------------------
-Interactive Streamlit dashboard for the Hybrid Secure Data Aggregation
-research project.  Visualises smart-meter data flowing through the
-Differential Privacy + Homomorphic Encryption pipeline.
+dashboard.py  ·
+=================================================
+⚡ Smart Grid Secure Energy Dashboard
+--------------------------------------
+Futuristic Energy Control Center redesign.
 
-Aesthetic direction: Deep-space data-terminal.
-Obsidian backgrounds, electric-teal accents for HE data,
-saffron for energy signals, crimson for threat/attack events.
-Typography: IBM Plex Mono for data labels, Outfit for UI text.
+Aesthetic: Next-gen grid operations command center.
+  - Deep navy obsidian shell with animated dot-grid texture
+  - Electric blue neon glow for live/primary data
+  - Amber pulse for energy readings
+  - Purple plasma for encrypted/HE streams
+  - Cyan frost for DP-protected outputs
+  - Crimson alert for threat/attack panels
+  - CSS animations: pulse, glow, slide-in, scanlines
+  - Orbitron headers / Exo 2 body / Share Tech Mono for data labels
 
 Run:
-    pip install streamlit pandas plotly numpy
-    streamlit run dashboard/dashboard.py
-
+    pip install streamlit pandas numpy plotly
+    streamlit run dashboard.py
 """
 
 from __future__ import annotations
 
 import hashlib
-import logging
-import math
-import os
 import random
-import sys
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-# ---------------------------------------------------------------------------
-# Path setup — allow imports from project root
-# ---------------------------------------------------------------------------
-_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-
-# ---------------------------------------------------------------------------
-# Optional project module imports
-# ---------------------------------------------------------------------------
-try:
-    from simulator.smart_meter_simulator import SmartGridSimulator, REGIONS
-
-    _SIM_AVAILABLE = True
-except ImportError:
-    _SIM_AVAILABLE = False
-    REGIONS = ["north", "south", "east", "west", "central"]
-
-try:
-    from privacy.differential_privacy import DifferentialPrivacyEngine, DPConfig
-
-    _DP_AVAILABLE = True
-except ImportError:
-    _DP_AVAILABLE = False
-
-try:
-    from analytics.energy_analysis import (
-        regional_consumption,
-        peak_load_detection,
-        meter_statistics,
-        privacy_noise_analysis,
-        hourly_load_profile,
-        anomaly_detection,
-    )
-
-    _ANALYTICS_AVAILABLE = True
-except ImportError:
-    _ANALYTICS_AVAILABLE = False
-
-# ============================================================
-# PAGE CONFIG  — must be first Streamlit call
-# ============================================================
+# ──────────────────────────────────────────────────────────────
+# PAGE CONFIG — first Streamlit call
+# ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="SecureGrid · Research Platform",
+    page_title="⚡ SecureGrid Control Center",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ============================================================
-# GLOBAL DESIGN TOKENS
-# ============================================================
-C = dict(
-    bg0="#080c14",
-    bg1="#0d1220",
-    bg2="#111827",
-    bg3="#1a2235",
-    border="#1e2d45",
-    teal="#00c8b4",
-    teal2="#5ef0e0",
-    saffron="#f7b731",
-    saffron2="#ffd166",
+# ──────────────────────────────────────────────────────────────
+# COLOUR SYSTEM
+# ──────────────────────────────────────────────────────────────
+P: Dict[str, str] = dict(
+    bg_base="#03070f",
+    bg_panel="#060d1a",
+    bg_raised="#0a1628",
+    bg_border="#0f2040",
+    blue="#0ea5e9",
+    blue2="#38bdf8",
+    blue_dim="#0369a1",
+    amber="#f59e0b",
+    amber2="#fbbf24",
+    cyan="#06b6d4",
+    cyan2="#22d3ee",
+    green="#22c55e",
+    green2="#4ade80",
+    purple="#8b5cf6",
+    purple2="#a78bfa",
     crimson="#ef4444",
-    violet="#a78bfa",
-    green="#34d399",
-    muted="#4b5a70",
-    text="#dde4f0",
-    text2="#7a8fa8",
+    crimson2="#fca5a5",
+    orange="#f97316",
+    text="#e2eaf6",
+    text_dim="#64748b",
+    text_mid="#94a3b8",
 )
 
-STYLE = f"""
+REGION_COLORS: Dict[str, str] = {
+    "north": P["amber"],
+    "south": P["cyan"],
+    "east": P["green"],
+    "west": P["purple"],
+    "central": P["orange"],
+}
+
+REGIONS = ["north", "south", "east", "west", "central"]
+
+
+# ──────────────────────────────────────────────────────────────
+# CSS INJECTION  — complete futuristic control-center theme
+# ──────────────────────────────────────────────────────────────
+def _css() -> str:
+    return f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Outfit:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&family=Exo+2:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Share+Tech+Mono&display=swap');
 
 :root {{
-  --bg0:{C["bg0"]};--bg1:{C["bg1"]};--bg2:{C["bg2"]};--bg3:{C["bg3"]};
-  --border:{C["border"]};--teal:{C["teal"]};--teal2:{C["teal2"]};
-  --saffron:{C["saffron"]};--saffron2:{C["saffron2"]};
-  --crimson:{C["crimson"]};--violet:{C["violet"]};--green:{C["green"]};
-  --muted:{C["muted"]};--text:{C["text"]};--text2:{C["text2"]};
+  --bg-base:{P["bg_base"]};--bg-panel:{P["bg_panel"]};
+  --bg-raised:{P["bg_raised"]};--bg-border:{P["bg_border"]};
+  --blue:{P["blue"]};--blue2:{P["blue2"]};
+  --amber:{P["amber"]};--amber2:{P["amber2"]};
+  --cyan:{P["cyan"]};--cyan2:{P["cyan2"]};
+  --green:{P["green"]};--green2:{P["green2"]};
+  --purple:{P["purple"]};--purple2:{P["purple2"]};
+  --crimson:{P["crimson"]};--crimson2:{P["crimson2"]};
+  --orange:{P["orange"]};
+  --text:{P["text"]};--text-dim:{P["text_dim"]};--text-mid:{P["text_mid"]};
+}}
+
+/* ── Keyframes ── */
+@keyframes pulse-blue {{
+  0%,100%{{box-shadow:0 0 8px rgba(14,165,233,.4),0 0 20px rgba(14,165,233,.12);}}
+  50%{{box-shadow:0 0 18px rgba(14,165,233,.75),0 0 44px rgba(14,165,233,.22);}}
+}}
+@keyframes pulse-amber {{
+  0%,100%{{box-shadow:0 0 8px rgba(245,158,11,.4),0 0 20px rgba(245,158,11,.12);}}
+  50%{{box-shadow:0 0 20px rgba(245,158,11,.8),0 0 48px rgba(245,158,11,.2);}}
+}}
+@keyframes pulse-green {{
+  0%,100%{{box-shadow:0 0 7px rgba(34,197,94,.45),0 0 16px rgba(34,197,94,.12);}}
+  50%{{box-shadow:0 0 16px rgba(34,197,94,.85),0 0 34px rgba(34,197,94,.22);}}
+}}
+@keyframes pulse-purple {{
+  0%,100%{{box-shadow:0 0 8px rgba(139,92,246,.4),0 0 20px rgba(139,92,246,.12);}}
+  50%{{box-shadow:0 0 18px rgba(139,92,246,.75),0 0 44px rgba(139,92,246,.2);}}
+}}
+@keyframes pulse-cyan {{
+  0%,100%{{box-shadow:0 0 8px rgba(6,182,212,.4),0 0 20px rgba(6,182,212,.12);}}
+  50%{{box-shadow:0 0 18px rgba(6,182,212,.75),0 0 40px rgba(6,182,212,.2);}}
+}}
+@keyframes blink {{0%,100%{{opacity:1;}}50%{{opacity:.15;}}}}
+@keyframes slide-down {{
+  from{{opacity:0;transform:translateY(-14px);}}
+  to{{opacity:1;transform:translateY(0);}}
+}}
+@keyframes grid-move {{
+  0%{{background-position:0 0;}}
+  100%{{background-position:30px 30px;}}
 }}
 
 /* ── Shell ── */
-.stApp {{ background: var(--bg0); color: var(--text); font-family:'Outfit',sans-serif; }}
-.main .block-container {{ padding:1.5rem 2.2rem 3rem; max-width:1440px; }}
-#MainMenu, footer, header {{ visibility:hidden; }}
-.stDeployButton {{ display:none; }}
+.stApp {{
+  background-color:var(--bg-base);
+  color:var(--text);
+  font-family:'Exo 2',sans-serif;
+  background-image:radial-gradient(circle,rgba(14,165,233,.055) 1px,transparent 1px);
+  background-size:28px 28px;
+  animation:grid-move 9s linear infinite;
+}}
+/* Scanlines */
+.stApp::before{{
+  content:'';position:fixed;inset:0;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) 2px,
+    rgba(0,8,22,.1) 2px,rgba(0,8,22,.1) 4px);
+  pointer-events:none;z-index:0;
+}}
+.main .block-container{{
+  padding:1.4rem 2.1rem 3rem;max-width:1500px;position:relative;z-index:1;
+}}
+#MainMenu,footer,header{{visibility:hidden;}}
+.stDeployButton{{display:none;}}
 
 /* ── Sidebar ── */
-section[data-testid="stSidebar"] {{
-  background: var(--bg1);
-  border-right:1px solid var(--border);
-}}
-section[data-testid="stSidebar"] label {{
-  color:var(--text2) !important;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:0.71rem;
-  letter-spacing:0.1em;
-  text-transform:uppercase;
-}}
-
-/* ── Metric cards ── */
-div[data-testid="stMetric"] {{
-  background:var(--bg2);
-  border:1px solid var(--border);
-  border-radius:12px;
-  padding:1.1rem 1.3rem;
-  position:relative;
-  overflow:hidden;
-}}
-div[data-testid="stMetric"]::before {{
-  content:'';
-  position:absolute;top:0;left:0;right:0;height:2px;
-  background:linear-gradient(90deg,var(--saffron),var(--teal));
-}}
-div[data-testid="stMetric"] label {{
-  color:var(--text2) !important;
-  font-family:'IBM Plex Mono',monospace !important;
-  font-size:0.68rem !important;
-  letter-spacing:0.12em;
-  text-transform:uppercase;
-}}
-div[data-testid="stMetric"] [data-testid="stMetricValue"] {{
-  color:var(--saffron2) !important;
-  font-family:'IBM Plex Mono',monospace !important;
-  font-size:1.65rem !important;
-  letter-spacing:-0.01em;
-}}
-
-/* ── Section headers ── */
-.sg-title {{
-  font-family:'IBM Plex Mono',monospace;
-  font-size:0.68rem;
-  letter-spacing:0.2em;
-  text-transform:uppercase;
-  color:var(--teal);
-  border-bottom:1px solid var(--border);
-  padding-bottom:0.45rem;
-  margin-bottom:1rem;
+section[data-testid="stSidebar"]{{
+  background:linear-gradient(180deg,#04091a 0%,#060d1f 100%);
+  border-right:1px solid var(--bg-border);
+  box-shadow:4px 0 24px rgba(14,165,233,.07);
 }}
 
 /* ── Hero ── */
-.sg-hero {{
-  background:linear-gradient(135deg,var(--bg2) 0%,var(--bg3) 100%);
-  border:1px solid var(--border);
+.hero{{
+  background:linear-gradient(135deg,#050e1f 0%,#071628 50%,#050e1f 100%);
+  border:1px solid var(--bg-border);
+  border-top:2px solid var(--blue);
   border-radius:16px;
-  padding:2.2rem 2.8rem;
-  margin-bottom:1.8rem;
-  position:relative;
-  overflow:hidden;
+  padding:2.3rem 3rem;
+  margin-bottom:1.5rem;
+  position:relative;overflow:hidden;
+  animation:slide-down .5s ease both;
 }}
-.sg-hero::before {{
-  content:'';
-  position:absolute;top:0;left:0;right:0;bottom:0;
-  background:radial-gradient(ellipse at 80% 50%,rgba(0,200,180,.06),transparent 60%);
+.hero::before{{
+  content:'';position:absolute;top:-50%;left:-12%;
+  width:55%;height:220%;
+  background:radial-gradient(ellipse,rgba(14,165,233,.07) 0%,transparent 65%);
   pointer-events:none;
 }}
-.sg-hero h1 {{
-  font-family:'IBM Plex Mono',monospace;
-  font-size:1.55rem;
-  color:var(--saffron2);
-  margin:0 0 0.4rem;
-  letter-spacing:0.03em;
+.hero::after{{
+  content:'';position:absolute;top:-40%;right:-8%;
+  width:42%;height:190%;
+  background:radial-gradient(ellipse,rgba(139,92,246,.055) 0%,transparent 60%);
+  pointer-events:none;
 }}
-.sg-hero .subtitle {{
-  font-size:0.9rem;
-  color:var(--text2);
-  margin:0 0 1.1rem;
-  line-height:1.6;
+.hero-eyebrow{{
+  font-family:'Share Tech Mono',monospace;
+  font-size:.64rem;letter-spacing:.32em;color:var(--blue);
+  text-transform:uppercase;margin-bottom:.45rem;
 }}
-.pipe-row {{
-  display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;
+.hero-title{{
+  font-family:'Orbitron',sans-serif;
+  font-size:1.85rem;font-weight:700;
+  color:var(--text);letter-spacing:.04em;line-height:1.22;
+  margin-bottom:.5rem;
 }}
-.pipe-node {{
-  background:var(--bg0);
-  border:1px solid var(--border);
+.hero-title .accent-b{{color:var(--blue2);}}
+.hero-title .accent-a{{color:var(--amber2);}}
+.hero-sub{{
+  font-size:.88rem;color:var(--text-mid);line-height:1.65;
+  max-width:700px;margin-bottom:1.35rem;
+}}
+.pipeline{{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem;}}
+.pipe-node{{
+  background:rgba(14,165,233,.07);
+  border:1px solid rgba(14,165,233,.28);
   border-radius:6px;
-  padding:0.28rem 0.75rem;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:0.68rem;
-  color:var(--teal);
-  letter-spacing:0.06em;
-  white-space:nowrap;
+  padding:.3rem .9rem;
+  font-family:'Share Tech Mono',monospace;
+  font-size:.64rem;color:var(--blue2);
+  letter-spacing:.07em;white-space:nowrap;
+  transition:all .22s;
 }}
-.pipe-arrow {{ color:var(--muted);font-size:0.8rem; }}
+.pipe-node:hover{{
+  background:rgba(14,165,233,.17);border-color:var(--blue);
+  box-shadow:0 0 12px rgba(14,165,233,.25);
+}}
+.pipe-arr{{color:var(--text-dim);font-size:.75rem;}}
 
 /* ── Status badges ── */
-.badge-live  {{background:#0a2e28;color:var(--teal2);border:1px solid var(--teal);border-radius:4px;padding:2px 9px;font-family:'IBM Plex Mono',monospace;font-size:0.68rem;}}
-.badge-dp    {{background:#2e2a08;color:var(--saffron2);border:1px solid var(--saffron);border-radius:4px;padding:2px 9px;font-family:'IBM Plex Mono',monospace;font-size:0.68rem;}}
-.badge-he    {{background:#0a1a2e;color:var(--violet);border:1px solid var(--violet);border-radius:4px;padding:2px 9px;font-family:'IBM Plex Mono',monospace;font-size:0.68rem;}}
-.badge-warn  {{background:#2e0a0a;color:var(--crimson);border:1px solid var(--crimson);border-radius:4px;padding:2px 9px;font-family:'IBM Plex Mono',monospace;font-size:0.68rem;}}
+.badge{{
+  display:inline-block;border-radius:4px;
+  padding:2px 10px;
+  font-family:'Share Tech Mono',monospace;
+  font-size:.63rem;letter-spacing:.1em;
+}}
+.b-live{{background:rgba(34,197,94,.1);color:var(--green2);border:1px solid rgba(34,197,94,.32);}}
+.b-dp  {{background:rgba(6,182,212,.09);color:var(--cyan2);border:1px solid rgba(6,182,212,.32);}}
+.b-he  {{background:rgba(139,92,246,.09);color:var(--purple2);border:1px solid rgba(139,92,246,.32);}}
+.b-atk {{background:rgba(239,68,68,.09);color:var(--crimson2);border:1px solid rgba(239,68,68,.32);}}
+.b-off {{background:rgba(100,116,139,.08);color:var(--text-dim);border:1px solid rgba(100,116,139,.28);}}
+.dot{{
+  display:inline-block;width:7px;height:7px;border-radius:50%;
+  margin-right:5px;vertical-align:middle;
+}}
+.dot-g{{background:var(--green);animation:pulse-green 1.8s ease-in-out infinite;}}
+.dot-b{{background:var(--blue);animation:pulse-blue 2s ease-in-out infinite;}}
 
-/* ── Cards ── */
-.info-card {{
-  background:var(--bg2);border:1px solid var(--border);
-  border-radius:10px;padding:1.1rem 1.4rem;height:100%;
+/* ── Section header ── */
+.sec-hdr{{
+  display:flex;align-items:center;gap:.65rem;
+  padding-bottom:.55rem;margin-bottom:1rem;
+  border-bottom:1px solid var(--bg-border);
+  position:relative;
 }}
-.he-card {{
-  background:linear-gradient(135deg,#080f20,#0a1530);
-  border:1px solid var(--violet);
-  border-radius:10px;padding:1.3rem 1.6rem;
+.sec-hdr::before{{
+  content:'';position:absolute;bottom:-1px;left:0;
+  width:55px;height:1px;background:var(--blue);
 }}
-.he-card h4 {{
-  font-family:'IBM Plex Mono',monospace;color:var(--violet);
-  font-size:0.82rem;letter-spacing:0.08em;margin:0 0 0.6rem;
+.sec-icon{{font-size:1.05rem;line-height:1;}}
+.sec-title{{
+  font-family:'Orbitron',sans-serif;
+  font-size:.66rem;font-weight:600;
+  letter-spacing:.22em;text-transform:uppercase;
+  color:var(--text-mid);
 }}
-.atk-card {{
-  background:linear-gradient(135deg,#1a0808,#2a0f0f);
-  border:1px solid var(--crimson);
-  border-radius:10px;padding:1.3rem 1.6rem;
+.sec-badge{{
+  margin-left:auto;
+  font-family:'Share Tech Mono',monospace;
+  font-size:.58rem;letter-spacing:.1em;
+  color:var(--blue);
+  border:1px solid rgba(14,165,233,.3);
+  border-radius:4px;padding:2px 8px;
 }}
-.atk-card h4 {{
-  font-family:'IBM Plex Mono',monospace;color:var(--crimson);
-  font-size:0.82rem;letter-spacing:0.08em;margin:0 0 0.6rem;
-}}
-.mono {{ font-family:'IBM Plex Mono',monospace;font-size:0.75rem;color:var(--teal2);word-break:break-all; }}
-.mono-sm {{ font-family:'IBM Plex Mono',monospace;font-size:0.68rem;color:var(--text2); }}
 
-/* ── Buttons ── */
-.stButton>button {{
-  background:linear-gradient(135deg,#0a2218,#082a20) !important;
-  color:var(--green) !important;
-  border:1px solid var(--green) !important;
+/* ── KPI Cards ── */
+.kpi-row{{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:.9rem;margin-bottom:.3rem;
+}}
+.kc{{
+  background:linear-gradient(145deg,var(--bg-panel),var(--bg-raised));
+  border:1px solid var(--bg-border);
+  border-radius:14px;padding:1.3rem 1.4rem 1.1rem;
+  position:relative;overflow:hidden;
+  transition:transform .22s,box-shadow .22s;
+}}
+.kc:hover{{transform:translateY(-3px);}}
+.kc-b{{border-top:2px solid var(--blue);  animation:pulse-blue  3.2s ease-in-out infinite;}}
+.kc-a{{border-top:2px solid var(--amber); animation:pulse-amber 3.2s ease-in-out infinite;}}
+.kc-c{{border-top:2px solid var(--cyan);  animation:pulse-cyan  3.5s ease-in-out infinite;}}
+.kc-g{{border-top:2px solid var(--green); animation:pulse-green 3.2s ease-in-out infinite;}}
+.kc-p{{border-top:2px solid var(--purple);animation:pulse-purple 3.2s ease-in-out infinite;}}
+.kc-glow{{
+  position:absolute;bottom:-15px;right:-15px;
+  width:80px;height:80px;border-radius:50%;opacity:.04;
+}}
+.kc-b .kc-glow{{background:var(--blue)}}
+.kc-a .kc-glow{{background:var(--amber)}}
+.kc-c .kc-glow{{background:var(--cyan)}}
+.kc-g .kc-glow{{background:var(--green)}}
+.kc-p .kc-glow{{background:var(--purple)}}
+.kc-ico{{
+  position:absolute;right:1rem;top:.9rem;
+  font-size:1.4rem;opacity:.17;
+}}
+.kc-lbl{{
+  font-family:'Share Tech Mono',monospace;
+  font-size:.6rem;letter-spacing:.18em;
+  text-transform:uppercase;margin-bottom:.5rem;
+}}
+.kc-b .kc-lbl{{color:var(--blue2);}}
+.kc-a .kc-lbl{{color:var(--amber2);}}
+.kc-c .kc-lbl{{color:var(--cyan2);}}
+.kc-g .kc-lbl{{color:var(--green2);}}
+.kc-p .kc-lbl{{color:var(--purple2);}}
+.kc-val{{
+  font-family:'Orbitron',sans-serif;font-size:1.68rem;
+  font-weight:700;line-height:1;margin-bottom:.4rem;color:var(--text);
+}}
+.kc-sub{{font-family:'Share Tech Mono',monospace;font-size:.52rem;letter-spacing:.08em;}}
+.kc-b .kc-sub{{color:var(--blue2);opacity:.7;}}
+.kc-a .kc-sub{{color:var(--amber2);opacity:.7;}}
+.kc-c .kc-sub{{color:var(--cyan2);opacity:.7;}}
+.kc-g .kc-sub{{color:var(--green2);opacity:.7;}}
+.kc-p .kc-sub{{color:var(--purple2);opacity:.7;}}
+.kc-delta{{font-family:'Share Tech Mono',monospace;font-size:.63rem;margin-top:.3rem;}}
+.delta-up  {{color:var(--green2);}}
+.delta-dn  {{color:var(--crimson);}}
+.delta-flat{{color:var(--text-dim);}}
+
+/* ── Generic panel ── */
+.panel{{
+  background:linear-gradient(145deg,var(--bg-panel),var(--bg-raised));
+  border:1px solid var(--bg-border);
+  border-radius:14px;padding:1.4rem 1.6rem;
+}}
+.pl-b{{border-left:3px solid var(--blue);}}
+.pl-a{{border-left:3px solid var(--amber);}}
+.pl-p{{border-left:3px solid var(--purple);}}
+.pl-c{{border-left:3px solid var(--cyan);}}
+.pl-g{{border-left:3px solid var(--green);}}
+.pl-r{{border-left:3px solid var(--crimson);}}
+
+/* ── HE Flow diagram ── */
+.flow{{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:0;margin:1.1rem 0;}}
+.fb{{
+  background:var(--bg-raised);border-radius:10px;
+  padding:.95rem 1.15rem;text-align:center;min-width:120px;
+}}
+.fb-b{{border:1px solid rgba(14,165,233,.48);box-shadow:0 0 14px rgba(14,165,233,.1);}}
+.fb-p{{border:1px solid rgba(139,92,246,.48);box-shadow:0 0 14px rgba(139,92,246,.1);}}
+.fb-g{{border:1px solid rgba(34,197,94,.48);box-shadow:0 0 14px rgba(34,197,94,.1);}}
+.fb-c{{border:1px solid rgba(6,182,212,.48);box-shadow:0 0 14px rgba(6,182,212,.1);}}
+.fb-ico{{font-size:1.55rem;display:block;margin-bottom:.28rem;}}
+.fb-lbl{{font-family:'Share Tech Mono',monospace;font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-mid);}}
+.fb-val{{font-family:'Orbitron',sans-serif;font-size:.72rem;font-weight:600;margin-top:.28rem;}}
+.fb-b .fb-val{{color:var(--blue2);}}
+.fb-p .fb-val{{color:var(--purple2);}}
+.fb-g .fb-val{{color:var(--green2);}}
+.fb-c .fb-val{{color:var(--cyan2);}}
+.flow-arr{{color:var(--bg-border);font-size:1.3rem;padding:0 .35rem;}}
+.cipher{{
+  background:rgba(139,92,246,.07);
+  border:1px solid rgba(139,92,246,.3);
+  border-radius:6px;padding:.55rem 1rem;
+  font-family:'Share Tech Mono',monospace;
+  font-size:.65rem;color:var(--purple2);
+  letter-spacing:.05em;word-break:break-all;line-height:1.6;
+  margin-top:.75rem;
+}}
+
+/* ── Attack info table ── */
+.atk-tbl{{width:100%;border-collapse:collapse;font-family:'Share Tech Mono',monospace;font-size:.7rem;}}
+.atk-tbl td{{padding:5px 4px;}}
+.atk-tbl td:first-child{{color:var(--text-dim);padding-right:12px;white-space:nowrap;}}
+
+/* ── Button overrides ── */
+.stButton>button{{
+  background:linear-gradient(135deg,rgba(14,165,233,.11),rgba(14,165,233,.05)) !important;
+  color:var(--blue2) !important;
+  border:1px solid rgba(14,165,233,.38) !important;
   border-radius:8px !important;
-  font-family:'IBM Plex Mono',monospace !important;
-  font-size:0.78rem !important;
-  letter-spacing:0.08em !important;
-  padding:0.5rem 1.4rem !important;
-  transition:all .2s !important;
+  font-family:'Orbitron',sans-serif !important;
+  font-size:.66rem !important;
+  letter-spacing:.12em !important;
+  padding:.52rem 1.35rem !important;
+  transition:all .22s !important;
+  text-transform:uppercase !important;
 }}
-.stButton>button:hover {{
-  background:var(--green) !important;
-  color:#080c14 !important;
-  box-shadow:0 0 20px rgba(52,211,153,.3) !important;
+.stButton>button:hover{{
+  background:rgba(14,165,233,.2) !important;
+  border-color:var(--blue) !important;
+  color:#fff !important;
+  box-shadow:0 0 22px rgba(14,165,233,.28) !important;
+  transform:translateY(-1px) !important;
 }}
-
-/* ── Tables ── */
-div[data-testid="stDataFrame"] thead tr th {{
-  background:var(--bg3) !important;
-  color:var(--text2) !important;
-  font-family:'IBM Plex Mono',monospace;
-  font-size:0.65rem;
-  letter-spacing:0.12em;
-  text-transform:uppercase;
+.btn-start .stButton>button{{
+  background:linear-gradient(135deg,rgba(34,197,94,.13),rgba(34,197,94,.05)) !important;
+  color:var(--green2) !important;
+  border-color:rgba(34,197,94,.42) !important;
 }}
-div[data-testid="stDataFrame"] tbody tr td {{
-  font-size:0.8rem;
-  color:var(--text);
+.btn-start .stButton>button:hover{{
+  background:rgba(34,197,94,.22) !important;
+  box-shadow:0 0 22px rgba(34,197,94,.28) !important;
+}}
+.btn-stop .stButton>button{{
+  background:linear-gradient(135deg,rgba(239,68,68,.11),rgba(239,68,68,.04)) !important;
+  color:var(--crimson2) !important;
+  border-color:rgba(239,68,68,.33) !important;
+}}
+.btn-stop .stButton>button:hover{{
+  background:rgba(239,68,68,.18) !important;
+  box-shadow:0 0 20px rgba(239,68,68,.22) !important;
 }}
 
 /* ── Expander ── */
-div[data-testid="stExpander"] {{
-  border:1px solid var(--border) !important;
+div[data-testid="stExpander"]{{
+  background:var(--bg-panel) !important;
+  border:1px solid var(--bg-border) !important;
   border-radius:10px !important;
-  background:var(--bg1) !important;
 }}
-div[data-testid="stExpander"] summary {{
-  font-family:'IBM Plex Mono',monospace;
-  font-size:0.78rem;
-  letter-spacing:0.05em;
+div[data-testid="stExpander"] summary{{
+  font-family:'Exo 2',sans-serif !important;
+  font-size:.8rem !important;color:var(--text-mid) !important;
 }}
 
-/* ── Dividers ── */
-hr {{ border-color:var(--border) !important;margin:1.8rem 0 !important; }}
+/* ── DataTable ── */
+div[data-testid="stDataFrame"] thead tr th{{
+  background:var(--bg-raised) !important;
+  color:var(--blue2) !important;
+  font-family:'Share Tech Mono',monospace !important;
+  font-size:.6rem !important;
+  letter-spacing:.14em !important;
+  text-transform:uppercase !important;
+  border-bottom:1px solid var(--bg-border) !important;
+}}
+div[data-testid="stDataFrame"] tbody tr td{{
+  font-family:'Exo 2',sans-serif !important;
+  font-size:.79rem !important;
+  color:var(--text) !important;
+  border-bottom:1px solid rgba(15,32,64,.7) !important;
+}}
+div[data-testid="stDataFrame"] tbody tr:hover td{{
+  background:rgba(14,165,233,.035) !important;
+}}
 
-/* ── Slider / select ── */
-div[data-testid="stSlider"] .stSlider {{ color:var(--teal) !important; }}
+/* ── Metric widget ── */
+div[data-testid="stMetric"]{{
+  background:linear-gradient(145deg,var(--bg-panel),var(--bg-raised)) !important;
+  border:1px solid var(--bg-border) !important;
+  border-radius:12px !important;
+  padding:1.05rem 1.3rem !important;
+}}
+div[data-testid="stMetric"] label{{
+  color:var(--text-dim) !important;
+  font-family:'Share Tech Mono',monospace !important;
+  font-size:.63rem !important;
+  letter-spacing:.14em !important;
+  text-transform:uppercase !important;
+}}
+div[data-testid="stMetric"] [data-testid="stMetricValue"]{{
+  color:var(--amber2) !important;
+  font-family:'Orbitron',sans-serif !important;
+  font-size:1.45rem !important;
+}}
+
+/* ── Slider ── */
+div[data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"]{{
+  background:var(--blue) !important;
+  box-shadow:0 0 8px rgba(14,165,233,.5) !important;
+}}
+
+/* ── Alert ── */
+div[data-testid="stAlert"]{{
+  background:rgba(245,158,11,.07) !important;
+  border-color:rgba(245,158,11,.3) !important;
+  border-radius:8px !important;
+  color:var(--amber2) !important;
+  font-family:'Exo 2',sans-serif !important;
+}}
+
+/* ── Divider ── */
+hr{{border:none !important;border-top:1px solid var(--bg-border) !important;margin:1.6rem 0 !important;}}
 </style>
 """
 
-# ============================================================
-# PLOTLY SHARED THEME
-# ============================================================
-# Root cause of "got multiple values for keyword argument 'legend'":
-#   fig.update_layout(**CHART_THEME, legend=dict(...))  <- SAME key twice
-# Fix: use _layout() which merges via dict.update() so overrides always win
-# and no key is ever duplicated in a single call.
-_CT_BASE = dict(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(13,18,32,0.7)",
-    font=dict(family="Outfit, sans-serif", color=C["text2"], size=11),
-    xaxis=dict(
-        gridcolor="#1e2d45",
-        linecolor="#1e2d45",
-        tickfont=dict(size=9),
-        title_font=dict(size=10),
-    ),
-    yaxis=dict(
-        gridcolor="#1e2d45",
-        linecolor="#1e2d45",
-        tickfont=dict(size=9),
-        title_font=dict(size=10),
-    ),
-    margin=dict(l=48, r=16, t=36, b=36),
-    legend=dict(
-        bgcolor="rgba(13,18,32,.85)",
-        bordercolor="#1e2d45",
-        borderwidth=1,
-        font=dict(size=9),
-    ),
-)
-_CT = _CT_BASE  # backward-compat alias
 
-
-def _layout(height: int = 340, **overrides) -> dict:
-    """
-    Return a merged Plotly layout dict: base theme + caller overrides.
-
-    Overrides win via dict.update(), so the same key can never appear
-    twice in one update_layout() call — eliminating the TypeError:
-        "got multiple values for keyword argument 'legend'"
-
-    Usage
-    -----
-    fig.update_layout(**_layout(300, legend=dict(x=1, y=0.5), title=...))
-    """
-    merged = dict(_CT_BASE)  # shallow copy
-    merged["height"] = height
-    merged.update(overrides)  # overrides win; no duplicate key possible
-    return merged
-
-
-REGION_COLORS = {
-    "north": C["saffron"],
-    "south": C["teal"],
-    "east": C["green"],
-    "west": C["violet"],
-    "central": "#fb923c",
-}
-
-# ============================================================
-# DATA GENERATION
-# ============================================================
-
+# ──────────────────────────────────────────────────────────────
+# DIURNAL PATTERN (hour 0-23)
+# ──────────────────────────────────────────────────────────────
 _DIURNAL = [
     0.30,
-    0.28,
-    0.26,
+    0.27,
     0.25,
-    0.25,
+    0.24,
+    0.24,
     0.28,
-    0.50,
-    0.75,
-    0.85,
-    0.72,
-    0.65,
+    0.52,
+    0.78,
+    0.88,
+    0.74,
+    0.66,
     0.65,
     0.70,
     0.68,
-    0.65,
+    0.66,
     0.68,
-    0.75,
-    0.95,
-    1.00,
+    0.76,
+    0.96,
+    1.0,
     0.98,
-    0.90,
-    0.80,
-    0.65,
-    0.45,
+    0.91,
+    0.82,
+    0.67,
+    0.46,
 ]
 
 
-def _diurnal(hour: int) -> float:
+def _d(hour: int) -> float:
     return _DIURNAL[hour % 24]
+
+
+# ──────────────────────────────────────────────────────────────
+# DATA GENERATION
+# ──────────────────────────────────────────────────────────────
 
 
 def generate_sample_data(
@@ -409,16 +526,10 @@ def generate_sample_data(
     noise_level: float = 0.08,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """
-    Generate synthetic smart-meter readings with realistic patterns.
-
-    Includes true values, DP-noised values, encrypted flag,
-    sub-metering breakdown, and regional clustering.
-    """
+    """Generate synthetic smart-meter readings with realistic patterns."""
     rng = random.Random(seed)
     np_rng = np.random.default_rng(seed)
 
-    # Per-meter fixed characteristics
     meta: Dict[str, Dict] = {}
     for i in range(n_meters):
         mid = f"meter_{i:03d}"
@@ -438,24 +549,16 @@ def generate_sample_data(
     for minute in range(n_minutes):
         ts = base_ts + timedelta(minutes=minute)
         hour = ts.hour
-        d = _diurnal(hour)
-
+        d = _d(hour)
         for mid, m in meta.items():
             base_e = max(0.05, (d * 2.0 + np_rng.normal(0, 0.12)) * m["scale"])
-
-            # Peak-hour spike (weekday 17-21)
             if ts.weekday() < 5 and 17 <= hour < 21:
                 base_e *= 1.20
-            # Weekend reduction
             if ts.weekday() >= 5:
                 base_e *= 0.85
-            # Occasional appliance spike
             if rng.random() < 0.025:
                 base_e += rng.uniform(0.4, 1.8)
-
             base_e = max(0.05, round(base_e, 4))
-
-            # Voltage / current
             voltage = round(230.0 + m["v_off"] + np_rng.normal(0, 0.7), 2)
             current = round(
                 max(
@@ -466,26 +569,13 @@ def generate_sample_data(
                 ),
                 3,
             )
-
-            # Sub-metering
             total_sm = max(0.0, base_e * 3 + np_rng.normal(0, 0.5))
             tw = m["w_k"] + m["w_l"] + m["w_h"]
-            kitchen = round(total_sm * m["w_k"] / tw, 3)
-            laundry = round(total_sm * m["w_l"] / tw, 3)
-            hvac = round(total_sm * m["w_h"] / tw, 3)
-
-            # DP noise — Laplace
-            scale_lap = noise_level * max(base_e, 0.01)
-            dp_noise = np_rng.laplace(0.0, scale_lap)
+            dp_noise = np_rng.laplace(0.0, noise_level * max(base_e, 0.01))
             noisy_e = max(0.0, round(base_e + dp_noise, 4))
-
-            # Mock HE token
             he_token = (
-                hashlib.sha256(f"{noisy_e:.6f}|secret".encode())
-                .hexdigest()[:20]
-                .upper()
+                hashlib.sha256(f"{noisy_e:.6f}|sk42".encode()).hexdigest()[:24].upper()
             )
-
             rows.append(
                 dict(
                     meter_id=mid,
@@ -495,9 +585,9 @@ def generate_sample_data(
                     voltage=voltage,
                     current=current,
                     region=m["region"],
-                    kitchen=kitchen,
-                    laundry=laundry,
-                    hvac=hvac,
+                    kitchen=round(total_sm * m["w_k"] / tw, 3),
+                    laundry=round(total_sm * m["w_l"] / tw, 3),
+                    hvac=round(total_sm * m["w_h"] / tw, 3),
                     privacy_noise=round(abs(dp_noise), 6),
                     encrypted=True,
                     he_token=he_token,
@@ -510,30 +600,25 @@ def generate_sample_data(
 
 
 def append_live_tick(df: pd.DataFrame, noise_level: float = 0.08) -> pd.DataFrame:
-    """Append one new minute of readings to the DataFrame."""
+    """Append one new minute of readings."""
     rng = np.random.default_rng()
     ts = df["timestamp"].max() + timedelta(minutes=1)
-    hour = ts.hour
-    d = _diurnal(hour)
-    new_rows = []
-
+    d = _d(ts.hour)
+    new: List[Dict] = []
     for mid in df["meter_id"].unique():
-        subset = df[df["meter_id"] == mid]
-        region = subset["region"].iloc[0]
-        scale = subset["energy_usage"].mean() / max(d * 2.0, 0.01)
-        scale = float(np.clip(scale, 0.4, 2.5))
-        base_e = max(0.05, (d * 2.0 + rng.normal(0, 0.12)) * scale)
-        base_e = round(base_e, 4)
+        sub = df[df["meter_id"] == mid]
+        region = sub["region"].iloc[0]
+        scale = float(
+            np.clip(sub["energy_usage"].mean() / max(d * 2.0, 0.01), 0.4, 2.5)
+        )
+        base_e = max(0.05, round((d * 2.0 + rng.normal(0, 0.12)) * scale, 4))
         voltage = round(230.0 + rng.normal(0, 0.7), 2)
         current = round(max(0.1, base_e * 1000 / max(voltage, 1.0)), 3)
-        dp_noise = rng.laplace(0.0, noise_level * max(base_e, 0.01))
-        noisy_e = max(0.0, round(base_e + dp_noise, 4))
-        he_token = (
-            hashlib.sha256(f"{noisy_e:.6f}|secret".encode()).hexdigest()[:20].upper()
-        )
-
+        dp_n = rng.laplace(0.0, noise_level * max(base_e, 0.01))
+        noisy_e = max(0.0, round(base_e + dp_n, 4))
+        he_tok = hashlib.sha256(f"{noisy_e:.6f}|sk42".encode()).hexdigest()[:24].upper()
         total_sm = max(0.0, base_e * 3 + rng.normal(0, 0.5))
-        new_rows.append(
+        new.append(
             dict(
                 meter_id=mid,
                 timestamp=ts,
@@ -545,63 +630,110 @@ def append_live_tick(df: pd.DataFrame, noise_level: float = 0.08) -> pd.DataFram
                 kitchen=round(total_sm * 0.35, 3),
                 laundry=round(total_sm * 0.30, 3),
                 hvac=round(total_sm * 0.35, 3),
-                privacy_noise=round(abs(dp_noise), 6),
+                privacy_noise=round(abs(dp_n), 6),
                 encrypted=True,
-                he_token=he_token,
+                he_token=he_tok,
             )
         )
-    return pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+    return pd.concat([df, pd.DataFrame(new)], ignore_index=True)
 
 
-# ============================================================
+# ──────────────────────────────────────────────────────────────
+# PLOTLY THEME  (safe merge — no duplicate-keyword crashes)
+# ──────────────────────────────────────────────────────────────
+_PT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(6,13,26,.88)",
+    font=dict(family="Exo 2, sans-serif", color=P["text_mid"], size=11),
+    xaxis=dict(
+        gridcolor="rgba(15,32,64,.8)",
+        linecolor=P["bg_border"],
+        tickfont=dict(size=9, family="Share Tech Mono"),
+        title_font=dict(size=10),
+        zerolinecolor="rgba(15,32,64,.8)",
+    ),
+    yaxis=dict(
+        gridcolor="rgba(15,32,64,.8)",
+        linecolor=P["bg_border"],
+        tickfont=dict(size=9, family="Share Tech Mono"),
+        title_font=dict(size=10),
+        zerolinecolor="rgba(15,32,64,.8)",
+    ),
+    margin=dict(l=52, r=20, t=44, b=42),
+    legend=dict(
+        bgcolor="rgba(6,13,26,.9)",
+        bordercolor=P["bg_border"],
+        borderwidth=1,
+        font=dict(size=9, family="Exo 2"),
+    ),
+)
+
+
+def _L(h: int = 340, **kw) -> dict:
+    """Safely merge Plotly base theme with per-chart overrides."""
+    m = dict(_PT)
+    m["height"] = h
+    m.update(kw)
+    return m
+
+
+# ──────────────────────────────────────────────────────────────
 # CHART BUILDERS
-# ============================================================
-
-
-def _apply_theme(fig: go.Figure, height: int = 340) -> go.Figure:
-    """Thin wrapper kept for compatibility. Prefer _layout() for new code."""
-    fig.update_layout(**_layout(height))
-    return fig
+# ──────────────────────────────────────────────────────────────
+_PALETTE = [
+    P["blue"],
+    P["amber"],
+    P["cyan"],
+    P["green"],
+    P["purple"],
+    P["orange"],
+    "#f472b6",
+    "#34d399",
+    "#60a5fa",
+    "#facc15",
+    "#fb7185",
+    "#a3e635",
+]
 
 
 def chart_timeseries(df: pd.DataFrame, meters: List[str]) -> go.Figure:
-    """Multi-meter energy time-series."""
     fig = go.Figure()
-    palette = px.colors.qualitative.Bold
     sub = df[df["meter_id"].isin(meters)]
-    for idx, mid in enumerate(meters[:12]):
+    for i, mid in enumerate(meters[:12]):
         mdf = sub[sub["meter_id"] == mid].sort_values("timestamp")
+        c = _PALETTE[i % len(_PALETTE)]
         fig.add_trace(
             go.Scatter(
                 x=mdf["timestamp"],
                 y=mdf["energy_usage"],
                 name=mid,
                 mode="lines",
-                line=dict(width=1.7, color=palette[idx % len(palette)]),
+                line=dict(width=1.8, color=c),
                 hovertemplate=f"<b>{mid}</b><br>%{{x|%H:%M}}<br>%{{y:.4f}} kW<extra></extra>",
             )
         )
-    _apply_theme(fig, 340)
     fig.update_layout(
-        title=dict(
-            text="Energy Consumption — Live Stream",
-            font=dict(size=12, color=C["text"]),
-            x=0,
-        ),
-        xaxis_title="Time",
-        yaxis_title="Energy (kW)",
-        hovermode="x unified",
+        **_L(
+            360,
+            title=dict(
+                text="⚡  Live Energy Consumption Stream",
+                font=dict(size=13, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            xaxis_title="Time",
+            yaxis_title="Energy (kW)",
+            hovermode="x unified",
+        )
     )
     return fig
 
 
 def chart_noisy_vs_true(df: pd.DataFrame, meter_id: str) -> go.Figure:
-    """Side-by-side real vs DP-noised for one meter."""
     mdf = df[df["meter_id"] == meter_id].sort_values("timestamp").tail(80)
     fig = make_subplots(
         rows=1,
         cols=2,
-        subplot_titles=("True (Private)", "Published (DP-Noised)"),
+        subplot_titles=("🔓 True Energy (Private)", "🔐 Published (DP-Noised)"),
         horizontal_spacing=0.08,
     )
     fig.add_trace(
@@ -609,8 +741,8 @@ def chart_noisy_vs_true(df: pd.DataFrame, meter_id: str) -> go.Figure:
             x=mdf["timestamp"],
             y=mdf["energy_usage"],
             fill="tozeroy",
-            fillcolor="rgba(247,183,49,.12)",
-            line=dict(color=C["saffron"], width=1.8),
+            fillcolor="rgba(245,158,11,.09)",
+            line=dict(color=P["amber"], width=2),
             name="True",
             hovertemplate="True: %{y:.4f}<extra></extra>",
         ),
@@ -622,127 +754,141 @@ def chart_noisy_vs_true(df: pd.DataFrame, meter_id: str) -> go.Figure:
             x=mdf["timestamp"],
             y=mdf["noisy_energy_usage"],
             fill="tozeroy",
-            fillcolor="rgba(0,200,180,.10)",
-            line=dict(color=C["teal"], width=1.8),
+            fillcolor="rgba(6,182,212,.08)",
+            line=dict(color=P["cyan"], width=2),
             name="Noised",
             hovertemplate="Noised: %{y:.4f}<extra></extra>",
         ),
         row=1,
         col=2,
     )
-    _apply_theme(fig, 310)
     fig.update_layout(
-        title=dict(
-            text=f"Differential Privacy Comparison — {meter_id}",
-            font=dict(size=12, color=C["text"]),
-            x=0,
-        ),
-        showlegend=False,
+        **_L(
+            320,
+            title=dict(
+                text=f"🔐 DP Comparison — {meter_id}",
+                font=dict(size=12, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            showlegend=False,
+        )
     )
     for ax in ["xaxis", "xaxis2", "yaxis", "yaxis2"]:
         fig.layout[ax].update(
-            gridcolor="#1e2d45",
-            linecolor="#1e2d45",
-            tickfont=dict(size=8, color=C["muted"]),
+            gridcolor="rgba(15,32,64,.8)",
+            linecolor=P["bg_border"],
+            tickfont=dict(size=8, color=P["text_dim"]),
         )
     for ann in fig.layout.annotations:
-        ann.font.color = C["text2"]
+        ann.font.color = P["text_mid"]
         ann.font.size = 10
+        ann.font.family = "Orbitron"
     return fig
 
 
 def chart_noise_histogram(df: pd.DataFrame, meter_id: str) -> go.Figure:
-    """Laplace noise distribution histogram."""
     mdf = df[df["meter_id"] == meter_id]
     fig = go.Figure(
         go.Histogram(
             x=mdf["privacy_noise"],
             nbinsx=35,
-            marker_color=C["saffron"],
-            marker_line=dict(color=C["bg0"], width=0.5),
-            opacity=0.85,
+            marker_color=P["cyan"],
+            marker_line=dict(color=P["bg_base"], width=0.5),
+            opacity=0.8,
             hovertemplate="Noise: %{x:.5f}<br>Count: %{y}<extra></extra>",
         )
     )
-    _apply_theme(fig, 240)
     fig.update_layout(
-        title=dict(
-            text="Laplace Noise Distribution", font=dict(size=12, color=C["text"]), x=0
-        ),
-        xaxis_title="Noise |Δ| (kW)",
-        yaxis_title="Count",
-        showlegend=False,
+        **_L(
+            252,
+            title=dict(
+                text="Laplace Noise",
+                font=dict(size=11, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            xaxis_title="Noise |Δ| (kW)",
+            yaxis_title="Count",
+            showlegend=False,
+        )
     )
     return fig
 
 
 def chart_regional_bar(df: pd.DataFrame) -> go.Figure:
-    """Regional total energy bar chart."""
     agg = (
         df.groupby("region")["energy_usage"]
         .sum()
         .reset_index()
         .sort_values("energy_usage", ascending=False)
     )
-    colours = [REGION_COLORS.get(r, C["saffron"]) for r in agg["region"]]
+    colours = [REGION_COLORS.get(r, P["blue"]) for r in agg["region"]]
     fig = go.Figure(
         go.Bar(
             x=agg["region"],
             y=agg["energy_usage"],
-            marker=dict(color=colours, opacity=0.82),
+            marker=dict(
+                color=colours, opacity=0.86, line=dict(color=P["bg_base"], width=0)
+            ),
             text=agg["energy_usage"].round(1).astype(str) + " kW",
             textposition="outside",
-            textfont=dict(size=10, color=C["text"]),
-            hovertemplate="<b>%{x}</b><br>Total: %{y:.2f} kW<extra></extra>",
+            textfont=dict(size=10, color=P["text"], family="Share Tech Mono"),
+            hovertemplate="<b>%{x}</b><br>%{y:.2f} kW<extra></extra>",
         )
     )
-    _apply_theme(fig, 290)
     fig.update_layout(
-        title=dict(
-            text="Grid Load by Region", font=dict(size=12, color=C["text"]), x=0
-        ),
-        xaxis_title="Region",
-        yaxis_title="Total Energy (kW)",
-        showlegend=False,
+        **_L(
+            302,
+            title=dict(
+                text="🗺  Grid Load by Region",
+                font=dict(size=12, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            xaxis_title="Region",
+            yaxis_title="Total Energy (kW)",
+            showlegend=False,
+            bargap=0.34,
+        )
     )
     return fig
 
 
 def chart_region_donut(df: pd.DataFrame) -> go.Figure:
-    """Regional share donut chart."""
     agg = df.groupby("region")["energy_usage"].sum().reset_index()
-    colours = [REGION_COLORS.get(r, C["saffron"]) for r in agg["region"]]
+    colours = [REGION_COLORS.get(r, P["blue"]) for r in agg["region"]]
     fig = go.Figure(
         go.Pie(
             labels=agg["region"],
             values=agg["energy_usage"].round(2),
-            hole=0.58,
-            marker=dict(colors=colours, line=dict(color=C["bg0"], width=2)),
-            textfont=dict(size=9, color=C["text"]),
+            hole=0.60,
+            marker=dict(colors=colours, line=dict(color=P["bg_base"], width=2)),
+            textfont=dict(size=9, color=P["text"], family="Exo 2"),
             hovertemplate="<b>%{label}</b><br>%{value:.2f} kW (%{percent})<extra></extra>",
         )
     )
-    # FIX: Use _layout() so legend override is merged safely — no duplicate key.
     fig.update_layout(
-        **_layout(
-            height=290,
-            title=dict(text="Region Share", font=dict(size=12, color=C["text"]), x=0),
+        **_L(
+            302,
+            title=dict(
+                text="Region Share",
+                font=dict(size=11, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
             showlegend=True,
             legend=dict(
                 orientation="v",
                 x=1.0,
                 y=0.5,
-                bgcolor="rgba(13,18,32,.85)",
-                bordercolor="#1e2d45",
+                bgcolor="rgba(6,13,26,.9)",
+                bordercolor=P["bg_border"],
                 borderwidth=1,
-                font=dict(size=9),
+                font=dict(size=9, family="Exo 2"),
             ),
             annotations=[
                 dict(
-                    text="Load<br>Share",
+                    text="LOAD<br>SHARE",
                     x=0.5,
                     y=0.5,
-                    font=dict(size=10, color=C["text2"], family="IBM Plex Mono"),
+                    font=dict(size=9, color=P["text_dim"], family="Orbitron"),
                     showarrow=False,
                 )
             ],
@@ -751,10 +897,9 @@ def chart_region_donut(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def chart_attack_simulation(df: pd.DataFrame, meter_id: str) -> go.Figure:
-    """Show adversary's reconstruction attempt vs true + published values."""
+def chart_attack(df: pd.DataFrame, meter_id: str) -> go.Figure:
     mdf = df[df["meter_id"] == meter_id].sort_values("timestamp").tail(50)
-    attacker = mdf["noisy_energy_usage"].rolling(6, min_periods=1).mean()
+    att = mdf["noisy_energy_usage"].rolling(6, min_periods=1).mean()
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -762,7 +907,7 @@ def chart_attack_simulation(df: pd.DataFrame, meter_id: str) -> go.Figure:
             y=mdf["energy_usage"],
             name="True (hidden)",
             mode="lines",
-            line=dict(color=C["saffron"], width=2.0, dash="dot"),
+            line=dict(color=P["amber"], width=2, dash="dot"),
             hovertemplate="True: %{y:.4f}<extra></extra>",
         )
     )
@@ -770,38 +915,39 @@ def chart_attack_simulation(df: pd.DataFrame, meter_id: str) -> go.Figure:
         go.Scatter(
             x=mdf["timestamp"],
             y=mdf["noisy_energy_usage"],
-            name="Published (DP-noised)",
+            name="Published (DP)",
             mode="lines",
-            line=dict(color=C["teal"], width=1.6),
+            line=dict(color=P["cyan"], width=1.8),
             hovertemplate="Published: %{y:.4f}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Scatter(
             x=mdf["timestamp"],
-            y=attacker,
-            name="Attacker estimate",
+            y=att,
+            name="⚠ Attacker est.",
             mode="lines",
-            line=dict(color=C["crimson"], width=1.8, dash="dash"),
+            line=dict(color=P["crimson"], width=1.8, dash="dash"),
             hovertemplate="Attacker: %{y:.4f}<extra></extra>",
         )
     )
-    _apply_theme(fig, 300)
     fig.update_layout(
-        title=dict(
-            text="Attack Reconstruction vs DP Protection",
-            font=dict(size=12, color=C["text"]),
-            x=0,
-        ),
-        xaxis_title="Time",
-        yaxis_title="Energy (kW)",
-        hovermode="x unified",
+        **_L(
+            312,
+            title=dict(
+                text="⚠️  Adversarial Reconstruction Attempt",
+                font=dict(size=12, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            xaxis_title="Time",
+            yaxis_title="Energy (kW)",
+            hovermode="x unified",
+        )
     )
     return fig
 
 
 def chart_voltage_heatmap(df: pd.DataFrame) -> go.Figure:
-    """Voltage levels across meters over time."""
     pivot = (
         df.sort_values("timestamp")
         .groupby("meter_id")
@@ -815,48 +961,49 @@ def chart_voltage_heatmap(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure(
         go.Heatmap(
             z=pivot.values,
-            x=[str(c.strftime("%H:%M")) for c in pivot.columns],
+            x=[c.strftime("%H:%M") for c in pivot.columns],
             y=pivot.index.tolist(),
             colorscale=[
-                [0, "#0a2e28"],
-                [0.35, C["saffron"]],
-                [0.65, C["saffron2"]],
-                [1, C["crimson"]],
+                [0, "#040d1a"],
+                [0.3, P["blue_dim"]],
+                [0.6, P["blue"]],
+                [0.8, P["amber"]],
+                [1, P["crimson"]],
             ],
             colorbar=dict(
                 title="V",
-                titlefont=dict(size=9, color=C["text2"]),
-                tickfont=dict(size=8, color=C["text2"]),
+                titlefont=dict(size=9, color=P["text_dim"]),
+                tickfont=dict(size=8, color=P["text_dim"]),
                 thickness=10,
             ),
             hovertemplate="Meter: %{y}<br>Time: %{x}<br>Voltage: %{z:.1f} V<extra></extra>",
         )
     )
-    # FIX: _layout() merges xaxis override safely — no duplicate xaxis key.
     fig.update_layout(
-        **_layout(
-            height=310,
+        **_L(
+            322,
             title=dict(
-                text="Voltage Heatmap — All Meters",
-                font=dict(size=12, color=C["text"]),
+                text="🌡  Voltage Stability Heatmap",
+                font=dict(size=12, color=P["text"], family="Orbitron"),
                 x=0,
             ),
             xaxis=dict(
                 tickangle=-45,
-                tickfont=dict(size=7),
+                tickfont=dict(size=7, family="Share Tech Mono"),
                 gridcolor="rgba(0,0,0,0)",
-                linecolor="#1e2d45",
+                linecolor=P["bg_border"],
             ),
             yaxis=dict(
-                tickfont=dict(size=8), gridcolor="rgba(0,0,0,0)", linecolor="#1e2d45"
+                tickfont=dict(size=8, family="Share Tech Mono"),
+                gridcolor="rgba(0,0,0,0)",
+                linecolor=P["bg_border"],
             ),
         )
     )
     return fig
 
 
-def chart_hourly_profile(df: pd.DataFrame) -> go.Figure:
-    """Average hourly load profile."""
+def chart_hourly(df: pd.DataFrame) -> go.Figure:
     df2 = df.copy()
     df2["hour"] = df2["timestamp"].dt.hour
     hp = df2.groupby("hour")["energy_usage"].agg(mean="mean", std="std").reset_index()
@@ -868,10 +1015,9 @@ def chart_hourly_profile(df: pd.DataFrame) -> go.Figure:
             y=list(hp["mean"] + hp["std"])
             + list(reversed((hp["mean"] - hp["std"]).tolist())),
             fill="toself",
-            fillcolor="rgba(0,200,180,.08)",
+            fillcolor="rgba(14,165,233,.07)",
             line=dict(color="rgba(0,0,0,0)"),
-            name="±1σ band",
-            showlegend=True,
+            name="±1σ",
         )
     )
     fig.add_trace(
@@ -879,25 +1025,28 @@ def chart_hourly_profile(df: pd.DataFrame) -> go.Figure:
             x=hp["hour"],
             y=hp["mean"],
             mode="lines+markers",
-            line=dict(color=C["teal"], width=2.2),
-            marker=dict(size=5, color=C["teal2"]),
+            line=dict(color=P["blue"], width=2.2),
+            marker=dict(
+                size=5, color=P["blue2"], line=dict(color=P["bg_base"], width=1)
+            ),
             name="Mean load",
             hovertemplate="Hour %{x}:00 → %{y:.4f} kW<extra></extra>",
         )
     )
-    # FIX: _layout() merges xaxis override safely — no duplicate xaxis key.
     fig.update_layout(
-        **_layout(
-            height=280,
+        **_L(
+            292,
             title=dict(
-                text="Hourly Load Profile", font=dict(size=12, color=C["text"]), x=0
+                text="24h Load Profile",
+                font=dict(size=12, color=P["text"], family="Orbitron"),
+                x=0,
             ),
             xaxis=dict(
                 title="Hour of Day",
                 tickvals=list(range(0, 24, 2)),
-                gridcolor="#1e2d45",
-                linecolor="#1e2d45",
-                tickfont=dict(size=9),
+                gridcolor="rgba(15,32,64,.8)",
+                linecolor=P["bg_border"],
+                tickfont=dict(size=9, family="Share Tech Mono"),
                 title_font=dict(size=10),
             ),
             yaxis_title="Avg Energy (kW)",
@@ -906,14 +1055,13 @@ def chart_hourly_profile(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def chart_sub_metering(df: pd.DataFrame, meter_id: str) -> go.Figure:
-    """Stacked area chart of sub-metering for a single meter."""
+def chart_sub(df: pd.DataFrame, meter_id: str) -> go.Figure:
     mdf = df[df["meter_id"] == meter_id].sort_values("timestamp").tail(60)
     fig = go.Figure()
     for col, colour, name in [
-        ("kitchen", C["saffron"], "Kitchen"),
-        ("laundry", C["teal"], "Laundry"),
-        ("hvac", C["violet"], "HVAC"),
+        ("kitchen", P["amber"], "🍳 Kitchen"),
+        ("laundry", P["cyan"], "🫧 Laundry"),
+        ("hvac", P["purple"], "❄️  HVAC"),
     ]:
         fig.add_trace(
             go.Scatter(
@@ -921,32 +1069,31 @@ def chart_sub_metering(df: pd.DataFrame, meter_id: str) -> go.Figure:
                 y=mdf[col],
                 name=name,
                 stackgroup="sub",
-                line=dict(color=colour, width=1),
-                fillcolor=colour.replace(")", ", 0.35)").replace("#", "rgba(")
-                if "rgba" not in colour
-                else colour,
+                line=dict(color=colour, width=1.3),
                 hovertemplate=f"{name}: %{{y:.3f}}<extra></extra>",
             )
         )
-    _apply_theme(fig, 260)
     fig.update_layout(
-        title=dict(
-            text=f"Sub-Metering — {meter_id}", font=dict(size=12, color=C["text"]), x=0
-        ),
-        xaxis_title="Time",
-        yaxis_title="Wh",
+        **_L(
+            272,
+            title=dict(
+                text=f"Sub-Metering — {meter_id}",
+                font=dict(size=12, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            xaxis_title="Time",
+            yaxis_title="Wh",
+        )
     )
     return fig
 
 
-# ============================================================
+# ──────────────────────────────────────────────────────────────
 # SESSION STATE
-# ============================================================
-
-
+# ──────────────────────────────────────────────────────────────
 def init_state() -> None:
     if "df" not in st.session_state:
-        st.session_state.df = generate_sample_data(n_meters=20, n_minutes=120)
+        st.session_state.df = generate_sample_data()
     if "simulating" not in st.session_state:
         st.session_state.simulating = False
     if "tick" not in st.session_state:
@@ -955,46 +1102,64 @@ def init_state() -> None:
         st.session_state.noise_level = 0.08
 
 
-# ============================================================
+# ──────────────────────────────────────────────────────────────
 # SIDEBAR
-# ============================================================
-
-
+# ──────────────────────────────────────────────────────────────
 def render_sidebar(df: pd.DataFrame):
-    st.sidebar.markdown(
+    sb = st.sidebar
+    sb.markdown(
         f"""
-        <div style='padding:.8rem 0 .4rem;'>
-          <p style='font-family:IBM Plex Mono,monospace;font-size:1.05rem;
-                    color:{C["saffron2"]};margin:0;letter-spacing:.06em;'>⚡ SECUREGRID</p>
-          <p style='font-family:Outfit,sans-serif;font-size:.7rem;
-                    color:{C["muted"]};margin:.2rem 0 0;'>Research Platform v2.0</p>
+        <div style="padding:.85rem 0 .4rem;">
+          <p style="font-family:Orbitron,sans-serif;font-size:.92rem;font-weight:700;
+                    color:{P["blue2"]};margin:0;letter-spacing:.08em;">⚡ SECUREGRID</p>
+          <p style="font-family:'Exo 2',sans-serif;font-size:.66rem;
+                    color:{P["text_dim"]};margin:.22rem 0 0;">Control Center v3.0</p>
         </div>
-        <hr style='border-color:{C["border"]};margin:.6rem 0;'>
-        """,
+        <hr style="border:none;border-top:1px solid {P["bg_border"]};margin:.6rem 0;">
+    """,
         unsafe_allow_html=True,
     )
 
-    # Live simulation controls
-    st.sidebar.markdown("##### 🔴  Simulation")
-    ca, cb = st.sidebar.columns(2)
-    with ca:
-        if st.button("▶ Start", key="btn_start", use_container_width=True):
-            st.session_state.simulating = True
-    with cb:
-        if st.button("■ Stop", key="btn_stop", use_container_width=True):
-            st.session_state.simulating = False
-
-    sim_badge = (
-        f'<span class="badge-live">● LIVE</span>'
-        if st.session_state.simulating
-        else f'<span class="mono-sm">● STATIC</span>'
+    # Simulation
+    sb.markdown(
+        f'<p style="font-family:Orbitron,sans-serif;font-size:.58rem;'
+        f"letter-spacing:.22em;color:{P['text_mid']};"
+        f'text-transform:uppercase;margin-bottom:.5rem;">▶  SIMULATION</p>',
+        unsafe_allow_html=True,
     )
-    st.sidebar.markdown(f"Status: {sim_badge}", unsafe_allow_html=True)
-    st.sidebar.markdown("---")
+    c1, c2 = sb.columns(2)
+    with c1:
+        st.markdown('<div class="btn-start">', unsafe_allow_html=True)
+        if st.button("▶ START", key="btn_start", use_container_width=True):
+            st.session_state.simulating = True
+        st.markdown("</div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown('<div class="btn-stop">', unsafe_allow_html=True)
+        if st.button("■ STOP", key="btn_stop", use_container_width=True):
+            st.session_state.simulating = False
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    # Privacy controls
-    st.sidebar.markdown("##### 🔒  Privacy Budget")
-    noise = st.sidebar.slider(
+    if st.session_state.simulating:
+        sb.markdown(
+            f'<div style="margin:.4rem 0;"><span class="badge b-live">'
+            f'<span class="dot dot-g"></span>LIVE · TICK #{st.session_state.tick}</span></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        sb.markdown(
+            '<div style="margin:.4rem 0;"><span class="badge b-off">● STATIC MODE</span></div>',
+            unsafe_allow_html=True,
+        )
+    sb.markdown("---")
+
+    # Privacy
+    sb.markdown(
+        f'<p style="font-family:Orbitron,sans-serif;font-size:.58rem;'
+        f"letter-spacing:.22em;color:{P['text_mid']};"
+        f'text-transform:uppercase;margin-bottom:.5rem;">🔒  PRIVACY BUDGET</p>',
+        unsafe_allow_html=True,
+    )
+    noise = sb.slider(
         "DP Noise σ",
         0.001,
         0.30,
@@ -1003,158 +1168,217 @@ def render_sidebar(df: pd.DataFrame):
         format="%.3f",
     )
     st.session_state.noise_level = noise
-    eps = round(1.0 / max(noise, 1e-4), 1)
-    st.sidebar.caption(f"≈ ε = {eps}  (1/σ proxy)")
-    st.sidebar.markdown("---")
-
-    # Filters
-    st.sidebar.markdown("##### 🔌  Meters")
-    all_meters = sorted(df["meter_id"].unique().tolist())
-    sel_meters = st.sidebar.multiselect(
-        "Select meters", all_meters, default=all_meters[:8]
+    sb.markdown(
+        f'<p style="font-family:Share Tech Mono,monospace;font-size:.63rem;'
+        f'color:{P["cyan2"]};margin-top:.2rem;">ε ≈ {round(1.0 / max(noise, 1e-4), 1)}</p>',
+        unsafe_allow_html=True,
     )
-    if not sel_meters:
-        sel_meters = all_meters
+    sb.markdown("---")
 
-    st.sidebar.markdown("##### 🗺  Regions")
-    all_regions = sorted(df["region"].unique().tolist())
-    sel_regions = st.sidebar.multiselect(
-        "Select regions", all_regions, default=all_regions
+    # Meter filter
+    sb.markdown(
+        f'<p style="font-family:Orbitron,sans-serif;font-size:.58rem;'
+        f"letter-spacing:.22em;color:{P['text_mid']};"
+        f'text-transform:uppercase;margin-bottom:.5rem;">🔌  METERS</p>',
+        unsafe_allow_html=True,
     )
-    if not sel_regions:
-        sel_regions = all_regions
+    all_m = sorted(df["meter_id"].unique().tolist())
+    sel_m = sb.multiselect(
+        "Smart Meters", all_m, default=all_m[:8], placeholder="Select…"
+    )
+    if not sel_m:
+        sel_m = all_m
+    sb.markdown("---")
 
-    st.sidebar.markdown("##### 🕒  Time Range")
+    # Region filter
+    sb.markdown(
+        f'<p style="font-family:Orbitron,sans-serif;font-size:.58rem;'
+        f"letter-spacing:.22em;color:{P['text_mid']};"
+        f'text-transform:uppercase;margin-bottom:.5rem;">🗺  REGIONS</p>',
+        unsafe_allow_html=True,
+    )
+    all_r = sorted(df["region"].unique().tolist())
+    sel_r = sb.multiselect("Grid Regions", all_r, default=all_r, placeholder="Select…")
+    if not sel_r:
+        sel_r = all_r
+    sb.markdown("---")
+
+    # Time range
+    sb.markdown(
+        f'<p style="font-family:Orbitron,sans-serif;font-size:.58rem;'
+        f"letter-spacing:.22em;color:{P['text_mid']};"
+        f'text-transform:uppercase;margin-bottom:.5rem;">🕒  TIME RANGE</p>',
+        unsafe_allow_html=True,
+    )
     ts_min = df["timestamp"].min().to_pydatetime()
     ts_max = df["timestamp"].max().to_pydatetime()
-    t_start = st.sidebar.slider("From", ts_min, ts_max, ts_min, format="HH:mm")
-    t_end = st.sidebar.slider("To", ts_min, ts_max, ts_max, format="HH:mm")
-    st.sidebar.markdown("---")
+    t0 = sb.slider("From", ts_min, ts_max, ts_min, format="HH:mm")
+    t1 = sb.slider("To", ts_min, ts_max, ts_max, format="HH:mm")
+    sb.markdown("---")
 
-    if st.sidebar.button("↺ Reset Data", use_container_width=True):
-        st.session_state.df = generate_sample_data(
-            n_meters=20, n_minutes=120, noise_level=noise
-        )
+    if sb.button("↺ RESET DATA", use_container_width=True):
+        st.session_state.df = generate_sample_data(noise_level=noise)
         st.session_state.tick = 0
         st.session_state.simulating = False
         st.rerun()
 
-    st.sidebar.markdown(
-        f"""<div style='font-family:Outfit,sans-serif;font-size:.68rem;
-                       color:{C["muted"]};padding:.8rem 0;line-height:1.65;'>
-            Hybrid Secure Data Aggregation<br>
-            for Smart Grids using HE + DP<br>
-            <em>University Research Prototype</em>
-            </div>""",
+    sb.markdown(
+        f"<div style=\"font-family:'Exo 2',sans-serif;font-size:.63rem;"
+        f'color:{P["text_dim"]};line-height:1.7;padding:.7rem 0;">'
+        f"Hybrid Secure Data Aggregation<br>for Smart Grids using HE + DP<br>"
+        f'<em style="color:{P["bg_border"]};">Research Prototype</em></div>',
         unsafe_allow_html=True,
     )
 
-    return sel_meters, sel_regions, (t_start, t_end), noise
+    return sel_m, sel_r, (t0, t1), noise
 
 
-# ============================================================
-# SECTION RENDERERS
-# ============================================================
-
-
-def s_hero() -> None:
+# ──────────────────────────────────────────────────────────────
+# HTML HELPERS
+# ──────────────────────────────────────────────────────────────
+def _sec(icon: str, title: str, badge: str = "") -> None:
+    b = f'<span class="sec-badge">{badge}</span>' if badge else ""
     st.markdown(
         f"""
-        <div class="sg-hero">
-          <h1>⚡ SecureGrid Research Platform</h1>
-          <p class="subtitle">
-            Hybrid Secure Data Aggregation for Smart Grids<br>
-            using <strong style="color:{C["saffron2"]};">Homomorphic Encryption</strong>
-            &amp; <strong style="color:{C["teal2"]};">Differential Privacy</strong>
-          </p>
-          <div class="pipe-row">
-            <span class="pipe-node">Smart Meter</span>
-            <span class="pipe-arrow">→</span>
-            <span class="pipe-node">DP Module</span>
-            <span class="pipe-arrow">→</span>
-            <span class="pipe-node">CKKS Encrypt</span>
-            <span class="pipe-arrow">→</span>
-            <span class="pipe-node">Kafka Stream</span>
-            <span class="pipe-arrow">→</span>
-            <span class="pipe-node">HE Aggregate</span>
-            <span class="pipe-arrow">→</span>
-            <span class="pipe-node">FastAPI Server</span>
-            <span class="pipe-arrow">→</span>
-            <span class="pipe-node">Analytics</span>
-            <span class="pipe-arrow">→</span>
-            <span class="pipe-node">Dashboard</span>
-          </div>
-        </div>
-        """,
+        <div class="sec-hdr">
+          <span class="sec-icon">{icon}</span>
+          <span class="sec-title">{title}</span>{b}
+        </div>""",
         unsafe_allow_html=True,
     )
 
 
-def s_badges(simulating: bool) -> None:
-    cols = st.columns([1, 1, 1, 1, 6])
-    with cols[0]:
-        if simulating:
-            st.markdown(
-                '<span class="badge-live">● LIVE</span>', unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                f'<span class="mono-sm" style="color:{C["muted"]};">● STATIC</span>',
-                unsafe_allow_html=True,
-            )
-    cols[1].markdown('<span class="badge-dp">🔐 DP</span>', unsafe_allow_html=True)
-    cols[2].markdown('<span class="badge-he">🔑 HE</span>', unsafe_allow_html=True)
-    cols[3].markdown(
-        '<span class="badge-warn">⚠ ATK SIM</span>', unsafe_allow_html=True
+def _delta(v: float, unit: str = "") -> str:
+    if v > 0:
+        return f'<div class="kc-delta delta-up">▲ +{v}{unit}</div>'
+    if v < 0:
+        return f'<div class="kc-delta delta-dn">▼ {v}{unit}</div>'
+    return f'<div class="kc-delta delta-flat">— stable</div>'
+
+
+# ──────────────────────────────────────────────────────────────
+# SECTION RENDERERS
+# ──────────────────────────────────────────────────────────────
+
+
+def s_hero(simulating: bool) -> None:
+    dot = '<span class="dot dot-g"></span>' if simulating else ""
+    live = (
+        f'<span class="badge b-live">{dot}LIVE STREAM</span>'
+        if simulating
+        else '<span class="badge b-off">● STATIC</span>'
+    )
+    st.markdown(
+        f"""
+        <div class="hero">
+          <div class="hero-eyebrow">⚡ SECURE ENERGY MONITORING SYSTEM</div>
+          <div class="hero-title">
+            <span class="accent-b">Smart Grid</span>
+            <span class="accent-a"> Energy</span> Control Center
+          </div>
+          <div class="hero-sub">
+            Privacy-Preserving Smart Grid Monitoring using
+            <strong style="color:{P["purple2"]};">Homomorphic Encryption</strong>
+            and <strong style="color:{P["cyan2"]};">Differential Privacy</strong>.
+            Real-time data flows through a secure aggregation pipeline —
+            individual readings are never exposed to the server.
+          </div>
+          <div class="pipeline">
+            <span class="pipe-node">📡 Smart Meter</span><span class="pipe-arr">→</span>
+            <span class="pipe-node">🔐 DP Module</span><span class="pipe-arr">→</span>
+            <span class="pipe-node">🔑 CKKS Encrypt</span><span class="pipe-arr">→</span>
+            <span class="pipe-node">⚡ Kafka Stream</span><span class="pipe-arr">→</span>
+            <span class="pipe-node">∑ HE Aggregate</span><span class="pipe-arr">→</span>
+            <span class="pipe-node">🖥 FastAPI Server</span><span class="pipe-arr">→</span>
+            <span class="pipe-node">📊 Dashboard</span>
+          </div>
+          <div style="display:flex;gap:.55rem;margin-top:1.1rem;flex-wrap:wrap;">
+            {live}
+            <span class="badge b-dp">🔐 DP ACTIVE</span>
+            <span class="badge b-he">🔑 HE ACTIVE</span>
+            <span class="badge b-atk">⚠ ATK SIM</span>
+          </div>
+        </div>""",
+        unsafe_allow_html=True,
     )
 
 
 def s_kpis(df: pd.DataFrame) -> None:
-    st.markdown(
-        '<p class="sg-title">📊 Grid Monitoring — KPIs</p>', unsafe_allow_html=True
-    )
-    total_e = df["energy_usage"].sum()
-    active_m = df["meter_id"].nunique()
-    avg_v = df["voltage"].mean()
-    avg_i = df["current"].mean()
-    enc_pct = df["encrypted"].mean() * 100
-
+    _sec("📊", "REAL-TIME GRID MONITORING", "KPI PANEL")
+    te = df["energy_usage"].sum()
+    am = df["meter_id"].nunique()
+    av = df["voltage"].mean()
+    ai = df["current"].mean()
+    ep = df["encrypted"].mean() * 100
     cut = df["timestamp"].quantile(0.90)
     r = df[df["timestamp"] >= cut]
     p = df[df["timestamp"] < cut]
-    d_e = round(r["energy_usage"].mean() - p["energy_usage"].mean(), 4) if len(p) else 0
-    d_v = round(r["voltage"].mean() - p["voltage"].mean(), 2) if len(p) else 0
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("⚡ Total Energy", f"{total_e:.1f} kW", delta=f"{d_e:+.3f}")
-    c2.metric("🔌 Active Meters", f"{active_m}", delta=None)
-    c3.metric("🔋 Avg Voltage", f"{avg_v:.1f} V", delta=f"{d_v:+.2f} V")
-    c4.metric("⚙ Avg Current", f"{avg_i:.2f} A", delta=None)
-    c5.metric("🔒 Encrypted", f"{enc_pct:.0f}%", delta=None)
-
-
-def s_timeseries(df: pd.DataFrame, sel_meters: List[str]) -> None:
+    de = (
+        round(r["energy_usage"].mean() - p["energy_usage"].mean(), 4) if len(p) else 0.0
+    )
+    dv = round(r["voltage"].mean() - p["voltage"].mean(), 2) if len(p) else 0.0
     st.markdown(
-        '<p class="sg-title">📈 Real-Time Energy Consumption</p>',
+        f"""
+        <div class="kpi-row">
+          <div class="kc kc-b">
+            <span class="kc-ico">⚡</span><div class="kc-glow"></div>
+            <div class="kc-lbl">Total Energy</div>
+            <div class="kc-val">{te:.1f}</div>
+            <div class="kc-sub">kW consumed</div>{_delta(de, " kW")}
+          </div>
+          <div class="kc kc-a">
+            <span class="kc-ico">🔌</span><div class="kc-glow"></div>
+            <div class="kc-lbl">Active Meters</div>
+            <div class="kc-val">{am}</div>
+            <div class="kc-sub">smart meters online</div>
+            <div class="kc-delta delta-flat">— all reporting</div>
+          </div>
+          <div class="kc kc-c">
+            <span class="kc-ico">🔋</span><div class="kc-glow"></div>
+            <div class="kc-lbl">Avg Voltage</div>
+            <div class="kc-val">{av:.1f}</div>
+            <div class="kc-sub">volts (nominal 230V)</div>{_delta(dv, "V")}
+          </div>
+          <div class="kc kc-g">
+            <span class="kc-ico">⚙</span><div class="kc-glow"></div>
+            <div class="kc-lbl">Avg Current</div>
+            <div class="kc-val">{ai:.2f}</div>
+            <div class="kc-sub">amperes</div>
+            <div class="kc-delta delta-flat">— nominal</div>
+          </div>
+          <div class="kc kc-p">
+            <span class="kc-ico">🔒</span><div class="kc-glow"></div>
+            <div class="kc-lbl">Encrypted</div>
+            <div class="kc-val">{ep:.0f}%</div>
+            <div class="kc-sub">readings secured</div>
+            <div class="kc-delta delta-up">▲ CKKS active</div>
+          </div>
+        </div>
+        <div style="height:.35rem;"></div>
+    """,
         unsafe_allow_html=True,
     )
+
+
+def s_timeseries(df: pd.DataFrame, sel_m: List[str]) -> None:
+    _sec("📈", "LIVE ENERGY MONITOR", "REAL-TIME")
     st.plotly_chart(
-        chart_timeseries(df, sel_meters),
+        chart_timeseries(df, sel_m),
         use_container_width=True,
         config={"displayModeBar": False},
     )
 
 
 def s_regional(df: pd.DataFrame) -> None:
-    st.markdown('<p class="sg-title">🗺 Regional Grid Load</p>', unsafe_allow_html=True)
-    ca, cb = st.columns([2, 1])
-    with ca:
+    _sec("🗺", "REGIONAL GRID LOAD", "DISTRIBUTION")
+    c1, c2 = st.columns([2, 1])
+    with c1:
         st.plotly_chart(
             chart_regional_bar(df),
             use_container_width=True,
             config={"displayModeBar": False},
         )
-    with cb:
+    with c2:
         st.plotly_chart(
             chart_region_donut(df),
             use_container_width=True,
@@ -1162,127 +1386,144 @@ def s_regional(df: pd.DataFrame) -> None:
         )
 
 
-def s_dp_privacy(df: pd.DataFrame, sel_meters: List[str]) -> None:
-    st.markdown(
-        '<p class="sg-title">🔐 Differential Privacy Protection</p>',
-        unsafe_allow_html=True,
-    )
-    dp_meter = st.selectbox(
-        "Select meter for DP comparison", sel_meters, key="dp_meter"
-    )
-    ca, cb = st.columns([3, 1])
-    with ca:
+def s_dp(df: pd.DataFrame, sel_m: List[str]) -> None:
+    _sec("🔐", "PRIVACY PROTECTION VISUALIZATION", "DIFFERENTIAL PRIVACY")
+    dp_m = st.selectbox("Meter for DP comparison", sel_m, key="dp_m")
+    c1, c2 = st.columns([3, 1])
+    with c1:
         st.plotly_chart(
-            chart_noisy_vs_true(df, dp_meter),
+            chart_noisy_vs_true(df, dp_m),
             use_container_width=True,
             config={"displayModeBar": False},
         )
-    with cb:
+    with c2:
         st.plotly_chart(
-            chart_noise_histogram(df, dp_meter),
+            chart_noise_histogram(df, dp_m),
             use_container_width=True,
             config={"displayModeBar": False},
         )
-
-    # Compute privacy stats
-    mdf = df[df["meter_id"] == dp_meter]
-    true_v = mdf["energy_usage"].tolist()
-    noisy_v = mdf["noisy_energy_usage"].tolist()
-    mae = round(float(np.mean(np.abs(np.array(true_v) - np.array(noisy_v)))), 5)
-    rmse = round(
-        float(np.sqrt(np.mean((np.array(true_v) - np.array(noisy_v)) ** 2))), 5
-    )
-
-    with st.expander("ℹ️  Differential Privacy — Technical Details"):
-        st.markdown(
-            f"""
-            **Laplace Mechanism** — `published = true + Laplace(0, Δf/ε)`
-
-            | Metric | Value |
-            |--------|-------|
-            | MAE (mean abs error) | `{mae}` kW |
-            | RMSE | `{rmse}` kW |
-            | Noise distribution | Laplace(0, σ) |
-
-            A smaller `ε` provides stronger privacy guarantees at the cost of higher
-            distortion.  The histogram shows the empirical noise distribution over this session.
-            Individual meter readings are **never revealed** to the aggregation server —
-            only the final decrypted aggregate is disclosed to the authorised analyst.
-            """,
-        )
-
-
-def s_he_panel(df: pd.DataFrame) -> None:
+    mdf = df[df["meter_id"] == dp_m]
+    tv = mdf["energy_usage"].values
+    nv = mdf["noisy_energy_usage"].values
+    mae = round(float(np.mean(np.abs(tv - nv))), 5)
+    rmse = round(float(np.sqrt(np.mean((tv - nv) ** 2))), 5)
+    eps = round(1.0 / max(st.session_state.noise_level, 1e-4), 2)
     st.markdown(
-        '<p class="sg-title">🔑 Homomorphic Encryption Aggregation</p>',
+        f"""
+        <div class="panel pl-c" style="margin-top:.6rem;">
+          <div style="display:flex;gap:2.2rem;flex-wrap:wrap;">
+            <div>
+              <div style="font-family:'Share Tech Mono',monospace;font-size:.58rem;
+                          letter-spacing:.16em;color:{P["text_dim"]};text-transform:uppercase;
+                          margin-bottom:.2rem;">Mechanism</div>
+              <div style="font-family:Orbitron,sans-serif;font-size:.73rem;color:{P["cyan2"]};">
+                Laplace(0, Δf/ε)
+              </div>
+            </div>
+            <div>
+              <div style="font-family:'Share Tech Mono',monospace;font-size:.58rem;
+                          letter-spacing:.16em;color:{P["text_dim"]};text-transform:uppercase;
+                          margin-bottom:.2rem;">ε (budget)</div>
+              <div style="font-family:Orbitron,sans-serif;font-size:.73rem;color:{P["cyan2"]};">{eps}</div>
+            </div>
+            <div>
+              <div style="font-family:'Share Tech Mono',monospace;font-size:.58rem;
+                          letter-spacing:.16em;color:{P["text_dim"]};text-transform:uppercase;
+                          margin-bottom:.2rem;">MAE</div>
+              <div style="font-family:Orbitron,sans-serif;font-size:.73rem;color:{P["amber2"]};">{mae} kW</div>
+            </div>
+            <div>
+              <div style="font-family:'Share Tech Mono',monospace;font-size:.58rem;
+                          letter-spacing:.16em;color:{P["text_dim"]};text-transform:uppercase;
+                          margin-bottom:.2rem;">RMSE</div>
+              <div style="font-family:Orbitron,sans-serif;font-size:.73rem;color:{P["amber2"]};">{rmse} kW</div>
+            </div>
+          </div>
+        </div>
+    """,
         unsafe_allow_html=True,
     )
+    with st.expander("ℹ️  How Differential Privacy Protects Households"):
+        st.markdown(f"""
+        **Laplace Mechanism** — published = true + Laplace(0, sensitivity / ε)
 
-    # Mock HE aggregate
-    values = df["noisy_energy_usage"].tolist()
-    total = sum(values)
-    n = len(values)
-    agg_token = hashlib.sha256(f"{total:.6f}|agg_key".encode()).hexdigest()[:32].upper()
+        - **ε (epsilon)** — privacy budget. Lower ε → stronger privacy, more distortion.
+        - An adversary seeing only published values cannot reliably reconstruct any true reading.
 
-    c1, c2, c3 = st.columns(3)
+        ```
+        published_energy = true_energy + Laplace(0, 1.0 / ε)
+        ```
+        The noise histogram shows the empirical distribution for `{dp_m}`.
+        """)
+
+
+def s_he(df: pd.DataFrame) -> None:
+    _sec("🔑", "ENCRYPTED AGGREGATION PIPELINE", "CKKS · HOMOMORPHIC ENCRYPTION")
+    vals = df["noisy_energy_usage"].tolist()
+    total = sum(vals)
+    n = len(vals)
+    agg_t = hashlib.sha256(f"{total:.6f}|mk".encode()).hexdigest().upper()
+    samp = df["he_token"].iloc[0] if len(df) else "N/A"
+    v0 = vals[0] if vals else 0.0
+    st.markdown(
+        f"""
+        <div class="panel pl-p">
+          <div class="flow">
+            <div class="fb fb-b"><span class="fb-ico">📡</span>
+              <div class="fb-lbl">Raw Reading</div>
+              <div class="fb-val">{v0:.4f} kW</div>
+            </div>
+            <div class="flow-arr">→</div>
+            <div class="fb fb-c"><span class="fb-ico">🔐</span>
+              <div class="fb-lbl">DP Noised</div>
+              <div class="fb-val">{v0:.4f} kW</div>
+            </div>
+            <div class="flow-arr">→</div>
+            <div class="fb fb-p"><span class="fb-ico">🔑</span>
+              <div class="fb-lbl">CKKS Encrypt</div>
+              <div class="fb-val">Enc(·)</div>
+            </div>
+            <div class="flow-arr">→</div>
+            <div class="fb fb-p"><span class="fb-ico">∑</span>
+              <div class="fb-lbl">HE Aggregate</div>
+              <div class="fb-val">Enc(Σ)</div>
+            </div>
+            <div class="flow-arr">→</div>
+            <div class="fb fb-g"><span class="fb-ico">🔓</span>
+              <div class="fb-lbl">Decrypt Sum</div>
+              <div class="fb-val">{total:.4f} kW</div>
+            </div>
+          </div>
+          <div class="cipher">
+            AGGREGATE CIPHERTEXT TOKEN:<br>
+            {agg_t[:32]}…{agg_t[-8:]}<br><br>
+            SAMPLE READING CT:  {samp}
+          </div>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("🔒 Encrypted Records", f"{n:,}")
     c2.metric("∑ HE Aggregate", f"{total:.3f} kW")
     c3.metric("🔓 Decrypted Total", f"{total:.3f} kW")
+    c4.metric("🔑 Scheme", "CKKS")
+    with st.expander("ℹ️  How HE Enables Private Aggregation"):
+        st.markdown("""
+        **CKKS** supports approximate arithmetic on real-valued ciphertexts:
 
-    st.markdown(
-        f"""
-        <div class="he-card" style="margin-top:.8rem;">
-          <h4>🔑  CKKS Ciphertext Aggregate (simulated)</h4>
-          <p class="mono">CT_AGG: {agg_token}</p>
-          <p style="font-family:Outfit,sans-serif;font-size:.8rem;
-                    color:{C["text2"]};margin-top:.6rem;line-height:1.6;">
-            The aggregation server receives only ciphertexts.
-            It computes the sum using CKKS homomorphic addition —
-            <em>no individual reading is ever decrypted</em>.
-            Only the final aggregate is revealed to the authorised analyst.
-            <br><br>
-            <strong style="color:{C["teal2"]};">
-              Enc(a) ⊕ Enc(b) = Enc(a + b)
-            </strong>
-          </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    with st.expander("ℹ️  CKKS Homomorphic Encryption — Technical Details"):
-        st.markdown(
-            f"""
-            **CKKS Scheme** (Cheon-Kim-Kim-Song) supports approximate arithmetic over
-            real-valued ciphertexts.
-
-            ```
-            # Encrypt
-            ct_i = CKKS.encrypt(dp_noised_energy_i)
-
-            # Aggregate (server — no decryption)
-            CT_sum = ct_0 ⊕ ct_1 ⊕ … ⊕ ct_n
-
-            # Decrypt (authorised analyst only)
-            total = CKKS.decrypt(CT_sum)
-            ```
-
-            | Parameter | Value |
-            |-----------|-------|
-            | Scheme | CKKS (approximate HE) |
-            | Poly modulus degree n | 8192 |
-            | Scale bits | 40 |
-            | Backend | Pyfhel / TenSEAL / MockHE |
-
-            Install real HE backend:  `pip install Pyfhel` or `pip install tenseal`
-            """,
-        )
+        ```python
+        ct_i = CKKS.encrypt(dp_noised_energy_i)
+        CT_sum = ct_0 ⊕ ct_1 ⊕ … ⊕ ct_n    # no decryption at server
+        total = CKKS.decrypt(CT_sum)          # only authorised analyst
+        ```
+        **Individual readings are never decrypted.** Only the aggregate is revealed.
+        Install: `pip install Pyfhel` or `pip install tenseal`
+        """)
 
 
-def s_meter_table(df: pd.DataFrame) -> None:
-    st.markdown(
-        '<p class="sg-title">📋 Smart Meter Activity Log</p>', unsafe_allow_html=True
-    )
+def s_table(df: pd.DataFrame) -> None:
+    _sec("📋", "SMART METER ACTIVITY LOG", f"{min(len(df), 150)} READINGS")
     latest = (
         df.sort_values("timestamp", ascending=False)
         .head(150)[
@@ -1303,7 +1544,7 @@ def s_meter_table(df: pd.DataFrame) -> None:
     st.dataframe(
         latest,
         use_container_width=True,
-        height=270,
+        height=285,
         hide_index=True,
         column_config={
             "meter_id": st.column_config.TextColumn("Meter ID"),
@@ -1317,71 +1558,64 @@ def s_meter_table(df: pd.DataFrame) -> None:
     )
 
 
-def s_attack_panel(df: pd.DataFrame, sel_meters: List[str]) -> None:
-    st.markdown(
-        '<p class="sg-title">⚠️  Attack Simulation Panel</p>', unsafe_allow_html=True
-    )
-    atk_meter = st.selectbox("Target meter", sel_meters, key="atk_meter")
-    mdf = df[df["meter_id"] == atk_meter].sort_values("timestamp").tail(40)
-    true_m = mdf["energy_usage"].mean()
-    noisy_m = mdf["noisy_energy_usage"].mean()
-    atk_err = abs(true_m - noisy_m) / max(true_m, 1e-6) * 100
-
-    ca, cb = st.columns([2, 1])
-    with ca:
+def s_attack(df: pd.DataFrame, sel_m: List[str]) -> None:
+    _sec("⚠️", "ADVERSARIAL ATTACK SIMULATION", "THREAT ANALYSIS")
+    atk = st.selectbox("Target meter", sel_m, key="atk")
+    mdf = df[df["meter_id"] == atk].sort_values("timestamp").tail(40)
+    tm = mdf["energy_usage"].mean()
+    nm = mdf["noisy_energy_usage"].mean()
+    err = abs(tm - nm) / max(tm, 1e-6) * 100
+    prot = "✅ PROTECTED" if err > 5 else "⚠️ MARGINAL"
+    c1, c2 = st.columns([2, 1])
+    with c1:
         st.plotly_chart(
-            chart_attack_simulation(df, atk_meter),
+            chart_attack(df, atk),
             use_container_width=True,
             config={"displayModeBar": False},
         )
-    with cb:
+    with c2:
         st.markdown(
             f"""
-            <div class="atk-card" style="min-height:260px;">
-              <h4>🎯 Reconstruction Analysis</h4>
-              <table style="font-family:IBM Plex Mono,monospace;font-size:.73rem;
-                            color:{C["text2"]};border-collapse:collapse;width:100%;">
-                <tr><td style="padding:4px 0;color:{C["muted"]};">Target</td>
-                    <td style="color:{C["text"]};">{atk_meter}</td></tr>
-                <tr><td style="padding:4px 0;color:{C["muted"]};">Method</td>
-                    <td style="color:{C["text"]};">Rolling-mean (k=6)</td></tr>
-                <tr><td style="padding:4px 0;color:{C["muted"]};">True mean</td>
-                    <td style="color:{C["saffron2"]};">{true_m:.4f} kW</td></tr>
-                <tr><td style="padding:4px 0;color:{C["muted"]};">Att. estimate</td>
-                    <td style="color:{C["crimson"]};">{noisy_m:.4f} kW</td></tr>
-                <tr><td style="padding:4px 0;color:{C["muted"]};">Estimation err.</td>
-                    <td style="color:{C["green"]};">{atk_err:.1f}%</td></tr>
+            <div class="panel pl-r" style="min-height:290px;">
+              <div style="font-family:Orbitron,sans-serif;font-size:.6rem;
+                          letter-spacing:.18em;color:{P["crimson"]};
+                          text-transform:uppercase;margin-bottom:.75rem;">
+                ⚠ Reconstruction Analysis
+              </div>
+              <table class="atk-tbl">
+                <tr><td>Target</td>   <td style="color:{P["text"]};">{atk}</td></tr>
+                <tr><td>Method</td>   <td style="color:{P["text"]};">Rolling mean (k=6)</td></tr>
+                <tr><td>True mean</td><td style="color:{P["amber2"]};">{tm:.4f} kW</td></tr>
+                <tr><td>Att. est.</td><td style="color:{P["crimson"]};">{nm:.4f} kW</td></tr>
+                <tr><td>Error</td>    <td style="color:{P["green2"]};">{err:.1f}%</td></tr>
+                <tr><td>Status</td>   <td style="color:{P["green2"]};">{prot}</td></tr>
               </table>
-              <p style="margin-top:.8rem;font-family:Outfit,sans-serif;
-                        font-size:.76rem;color:{C["muted"]};line-height:1.55;">
+              <p style="margin-top:.85rem;font-family:'Exo 2',sans-serif;
+                        font-size:.74rem;color:{P["text_dim"]};line-height:1.55;">
                 Higher σ → larger estimation error → stronger DP protection.
-                The attacker cannot distinguish whether any individual meter's
-                reading contributed to the published noisy values.
+                Attacker's rolling-mean estimate cannot converge on the true signal
+                when Laplace noise is active.
               </p>
             </div>
-            """,
+        """,
             unsafe_allow_html=True,
         )
 
 
-def s_advanced_analytics(df: pd.DataFrame, sel_meters: List[str]) -> None:
-    """Hourly profile, sub-metering, and voltage heatmap in expanders."""
-    with st.expander("📊  Hourly Load Profile", expanded=False):
+def s_advanced(df: pd.DataFrame, sel_m: List[str]) -> None:
+    _sec("🔬", "ADVANCED ANALYTICS", "EXPANDED VIEW")
+    with st.expander("📊  24-Hour Load Profile"):
         st.plotly_chart(
-            chart_hourly_profile(df),
+            chart_hourly(df), use_container_width=True, config={"displayModeBar": False}
+        )
+    with st.expander("🔌  Sub-Metering Appliance Breakdown"):
+        sm = st.selectbox("Select meter", sel_m, key="sub_m")
+        st.plotly_chart(
+            chart_sub(df, sm),
             use_container_width=True,
             config={"displayModeBar": False},
         )
-
-    with st.expander("🔌  Sub-Metering Breakdown", expanded=False):
-        sub_m = st.selectbox("Select meter", sel_meters, key="sub_meter")
-        st.plotly_chart(
-            chart_sub_metering(df, sub_m),
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
-
-    with st.expander("🌡  Voltage Heatmap", expanded=False):
+    with st.expander("🌡  Voltage Stability Heatmap"):
         st.plotly_chart(
             chart_voltage_heatmap(df),
             use_container_width=True,
@@ -1389,81 +1623,86 @@ def s_advanced_analytics(df: pd.DataFrame, sel_meters: List[str]) -> None:
         )
 
 
-# ============================================================
-# MAIN APPLICATION
-# ============================================================
-
-
+# ──────────────────────────────────────────────────────────────
+# MAIN
+# ──────────────────────────────────────────────────────────────
 def main() -> None:
-    st.markdown(STYLE, unsafe_allow_html=True)
+    st.markdown(_css(), unsafe_allow_html=True)
     init_state()
 
-    # ── Sidebar ──────────────────────────────────────────────
-    sel_meters, sel_regions, time_range, noise_level = render_sidebar(
-        st.session_state.df
-    )
+    sel_m, sel_r, t_range, noise = render_sidebar(st.session_state.df)
 
-    # ── Live tick ────────────────────────────────────────────
+    # Live tick
     if st.session_state.simulating:
-        st.session_state.df = append_live_tick(
-            st.session_state.df, noise_level=noise_level
-        )
+        st.session_state.df = append_live_tick(st.session_state.df, noise_level=noise)
         st.session_state.tick += 1
-        # Cap DataFrame size for memory safety
-        max_rows = 20 * 400  # 20 meters × 400 minutes
-        if len(st.session_state.df) > max_rows:
-            st.session_state.df = st.session_state.df.iloc[-max_rows:]
+        if len(st.session_state.df) > 20 * 400:
+            st.session_state.df = st.session_state.df.iloc[-20 * 300 :]
 
-    # ── Filter ───────────────────────────────────────────────
+    # Filter
     df_all = st.session_state.df
     mask = (
-        df_all["meter_id"].isin(sel_meters)
-        & df_all["region"].isin(sel_regions)
-        & (df_all["timestamp"] >= pd.Timestamp(time_range[0]))
-        & (df_all["timestamp"] <= pd.Timestamp(time_range[1]))
+        df_all["meter_id"].isin(sel_m)
+        & df_all["region"].isin(sel_r)
+        & (df_all["timestamp"] >= pd.Timestamp(t_range[0]))
+        & (df_all["timestamp"] <= pd.Timestamp(t_range[1]))
     )
     df = df_all[mask].copy()
-
     if df.empty:
-        st.warning("⚠ No data matches current filters. Adjust sidebar settings.")
+        st.warning("⚠ No data matches current filters — adjust the sidebar controls.")
         return
 
-    # ════════════════════════════════════════════════════════
-    # SECTIONS
-    # ════════════════════════════════════════════════════════
-    s_hero()
-    s_badges(st.session_state.simulating)
+    # ── Render all sections ──────────────────────────────────
+    s_hero(st.session_state.simulating)  # 1. Hero header
+
+    st.markdown(
+        f"""
+        <div class="panel pl-g" style="text-align:center;padding:1.5rem 2rem;margin-bottom:.5rem;">
+          <div style="font-family:Orbitron,sans-serif;font-size:.7rem;
+                      letter-spacing:.18em;color:{P["green2"]};text-transform:uppercase;
+                      margin-bottom:.35rem;">Smart Grid Simulation Engine</div>
+          <div style="font-family:'Exo 2',sans-serif;font-size:.82rem;color:{P["text_dim"]};">
+            Click <strong style="color:{P["green"]};">▶ START</strong> in the sidebar to begin live
+            data generation. New readings are appended every 1.5 seconds.
+            Click <strong style="color:{P["crimson"]};">■ STOP</strong> to freeze the stream.
+          </div>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
     st.markdown("---")
-    s_kpis(df)
+    s_kpis(df)  # 2. KPI Cards
     st.markdown("---")
-    s_timeseries(df, sel_meters)
+    s_timeseries(df, sel_m)  # 3. Live Energy Chart
     st.markdown("---")
-    s_regional(df)
+    s_regional(df)  # 4. Regional Load
     st.markdown("---")
-    s_dp_privacy(df, sel_meters)
+    s_dp(df, sel_m)  # 5. DP Privacy
     st.markdown("---")
-    s_he_panel(df)
+    s_he(df)  # 6. HE Aggregation
     st.markdown("---")
-    s_meter_table(df)
+    s_table(df)  # 7. Meter Table
     st.markdown("---")
-    s_attack_panel(df, sel_meters)
+    s_attack(df, sel_m)  # 8. Attack Simulation
     st.markdown("---")
-    s_advanced_analytics(df, sel_meters)
+    s_advanced(df, sel_m)  # 9. Advanced Analytics
 
     # Footer
     st.markdown(
         f"""
         <hr>
-        <div style="text-align:center;font-family:IBM Plex Mono,monospace;
-                    font-size:.65rem;color:{C["muted"]};padding:.4rem 0 1.5rem;">
-            SecureGrid Research Platform · Hybrid HE + DP Smart Grid Aggregation ·
-            Built with Streamlit + Plotly
+        <div style="text-align:center;font-family:'Share Tech Mono',monospace;
+                    font-size:.6rem;color:{P["text_dim"]};
+                    padding:.5rem 0 2rem;letter-spacing:.07em;">
+          ⚡ SECUREGRID CONTROL CENTER &nbsp;·&nbsp;
+          Hybrid HE + DP Smart Grid Aggregation &nbsp;·&nbsp;
+          Streamlit + Plotly &nbsp;·&nbsp; Research Prototype
         </div>
-        """,
+    """,
         unsafe_allow_html=True,
     )
 
-    # ── Auto-rerun for live simulation ───────────────────────
     if st.session_state.simulating:
         time.sleep(1.5)
         st.rerun()
@@ -1471,3 +1710,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# ════════════════════════════════════════════════════════════
+#  HOW TO RUN
+#  pip install streamlit pandas numpy plotly
+#  streamlit run dashboard.py
+# ════════════════════════════════════════════════════════════
