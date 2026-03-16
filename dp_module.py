@@ -28,9 +28,6 @@ Usage
     dp = DifferentialPrivacyModule(DPConfig(epsilon=1.0, mechanism="laplace"))
     noised_reading = dp.apply(reading)
     print(dp.budget_report())
-
-Author : Senior Python / Smart-Grid Research Engineer
-License: MIT
 """
 
 from __future__ import annotations
