@@ -1,5 +1,5 @@
 """
-dashboard.py  ·
+dashboard.py  ·  SecureGrid Control Center  v3.0
 =================================================
 ⚡ Smart Grid Secure Energy Dashboard
 --------------------------------------

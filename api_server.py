@@ -45,8 +45,6 @@ Endpoints
     GET /status
     WS  /ws/readings?limit=100
 
-Author : Senior Python / Smart-Grid Research Engineer
-License: MIT
 """
 
 from __future__ import annotations
