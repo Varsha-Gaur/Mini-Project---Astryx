@@ -718,8 +718,7 @@ def chart_voltage_heat(df):
                 [1, P["crimson"]],
             ],
             colorbar=dict(
-                title="V",
-                titlefont=dict(size=9, color=P["text_dim"]),
+                title=dict(text="V", font=dict(size=9, color=P["text_dim"])),
                 tickfont=dict(size=8, color=P["text_dim"]),
                 thickness=10,
             ),
@@ -936,9 +935,7 @@ def s_kpis(df):
 def s_timeseries(df, sel_m):
     _sec("📈", "LIVE ENERGY MONITOR", "REAL-TIME")
     st.plotly_chart(
-        chart_timeseries(df, sel_m),
-        use_container_width=True,
-        config={"displayModeBar": False},
+        chart_timeseries(df, sel_m), width="stretch", config={"displayModeBar": False}
     )
 
 
@@ -947,15 +944,11 @@ def s_regional(df):
     c1, c2 = st.columns([2, 1])
     with c1:
         st.plotly_chart(
-            chart_regional_bar(df),
-            use_container_width=True,
-            config={"displayModeBar": False},
+            chart_regional_bar(df), width="stretch", config={"displayModeBar": False}
         )
     with c2:
         st.plotly_chart(
-            chart_region_pie(df),
-            use_container_width=True,
-            config={"displayModeBar": False},
+            chart_region_pie(df), width="stretch", config={"displayModeBar": False}
         )
 
 
@@ -966,13 +959,13 @@ def s_dp(df, sel_m):
     with c1:
         st.plotly_chart(
             chart_noisy_vs_true(df, dp_m),
-            use_container_width=True,
+            width="stretch",
             config={"displayModeBar": False},
         )
     with c2:
         st.plotly_chart(
             chart_noise_hist(df, dp_m),
-            use_container_width=True,
+            width="stretch",
             config={"displayModeBar": False},
         )
     mdf = df[df["meter_id"] == dp_m]
@@ -1099,9 +1092,7 @@ def s_attack(df, sel_m):
     c1, c2 = st.columns([2, 1])
     with c1:
         st.plotly_chart(
-            chart_attack(df, atk),
-            use_container_width=True,
-            config={"displayModeBar": False},
+            chart_attack(df, atk), width="stretch", config={"displayModeBar": False}
         )
     with c2:
         st.markdown(
@@ -1126,20 +1117,16 @@ def s_advanced(df, sel_m):
     _sec("🔬", "ADVANCED ANALYTICS", "EXPANDED VIEW")
     with st.expander("📊  24-Hour Load Profile"):
         st.plotly_chart(
-            chart_hourly(df), use_container_width=True, config={"displayModeBar": False}
+            chart_hourly(df), width="stretch", config={"displayModeBar": False}
         )
     with st.expander("🔌  Sub-Metering Appliance Breakdown"):
         sm = st.selectbox("Select meter", sel_m, key="sub_m")
         st.plotly_chart(
-            chart_sub(df, sm),
-            use_container_width=True,
-            config={"displayModeBar": False},
+            chart_sub(df, sm), width="stretch", config={"displayModeBar": False}
         )
     with st.expander("🌡  Voltage Stability Heatmap"):
         st.plotly_chart(
-            chart_voltage_heat(df),
-            use_container_width=True,
-            config={"displayModeBar": False},
+            chart_voltage_heat(df), width="stretch", config={"displayModeBar": False}
         )
 
 
