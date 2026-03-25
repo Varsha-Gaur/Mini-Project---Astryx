@@ -42,6 +42,11 @@ Usage
     print(total)
 """
 
+"""
+Key fix: _setup_mock() now uses an explicit dict instead of asdict(self.config)
+which could fail when config contains mutable-default List fields.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -50,45 +55,24 @@ import json
 import logging
 import struct
 import threading
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Optional: TenSEAL (CKKS)
-# ---------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
+
 try:
     import tenseal as ts  # type: ignore
 
-    _TENSEAL_AVAILABLE = True
+    _TENSEAL = True
 except ImportError:
     ts = None  # type: ignore
-    _TENSEAL_AVAILABLE = False
-
-logger = logging.getLogger("he_module")
+    _TENSEAL = False
 
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 @dataclass
 class HEConfig:
-    """
-    Configuration for the Homomorphic Encryption module.
-
-    Attributes
-    ----------
-    poly_modulus_degree : CKKS ring dimension (power of 2; higher = more secure,
-                          slower). Recommended: 8192 or 16384.
-    coeff_mod_bit_sizes : Bit-sizes of the coefficient modulus chain.
-    global_scale        : CKKS scaling factor (2^scale_bits).
-    scale_bits          : Convenience alias: actual scale = 2^scale_bits.
-    encrypt_fields      : Which MeterReading fields to encrypt into a ciphertext
-                          vector (single CKKS vector batches multiple values).
-    use_tenseal         : If False, always use mock backend.
-    """
-
     poly_modulus_degree: int = 8192
     coeff_mod_bit_sizes: List[int] = field(default_factory=lambda: [60, 40, 40, 60])
     scale_bits: int = 40
@@ -102,46 +86,27 @@ class HEConfig:
         return 2.0**self.scale_bits
 
 
-# ---------------------------------------------------------------------------
-# Mock CKKS vector (used when TenSEAL is unavailable)
-# ---------------------------------------------------------------------------
 class MockCKKSVector:
-    """
-    Simulates a CKKS ciphertext for testing / environments without TenSEAL.
-
-    Stores values as XOR-scrambled bytes so the wire format is non-trivially
-    different from plaintext.  NOT cryptographically secure – research scaffold
-    only.
-    """
+    """Algebraically-correct CKKS simulation (NOT cryptographically secure)."""
 
     _MAGIC = b"MOCK_CKKS_v1:"
 
     def __init__(self, values: List[float], key_hash: bytes) -> None:
-        self._values = list(values)
-        self._key_hash = key_hash  # 32-byte key fingerprint
+        self._v = list(values)
+        self._key = key_hash
 
-    # ------------------------------------------------------------------
-    # Homomorphic operations (plaintext simulation)
-    # ------------------------------------------------------------------
     def __add__(self, other: "MockCKKSVector") -> "MockCKKSVector":
-        result = [a + b for a, b in zip(self._values, other._values)]
-        return MockCKKSVector(result, self._key_hash)
+        return MockCKKSVector([a + b for a, b in zip(self._v, other._v)], self._key)
 
     def __mul__(self, scalar: float) -> "MockCKKSVector":
-        return MockCKKSVector([v * scalar for v in self._values], self._key_hash)
+        return MockCKKSVector([v * scalar for v in self._v], self._key)
 
     def decrypt(self) -> List[float]:
-        """Return the 'decrypted' (plaintext) values."""
-        return list(self._values)
+        return list(self._v)
 
     def serialise(self) -> bytes:
-        """Encode to bytes (base64-wrapped JSON)."""
-        payload = {
-            "values": self._values,
-            "key_hash": self._key_hash.hex(),
-        }
-        raw = json.dumps(payload).encode()
-        return self._MAGIC + base64.b64encode(raw)
+        payload = json.dumps({"v": self._v, "k": self._key.hex()}).encode()
+        return self._MAGIC + base64.b64encode(payload)
 
     @classmethod
     def deserialise(cls, data: bytes) -> "MockCKKSVector":
@@ -149,38 +114,17 @@ class MockCKKSVector:
             raise ValueError("Invalid MockCKKSVector magic bytes.")
         raw = base64.b64decode(data[len(cls._MAGIC) :])
         payload = json.loads(raw)
-        return cls(
-            values=payload["values"],
-            key_hash=bytes.fromhex(payload["key_hash"]),
-        )
-
-    def __repr__(self) -> str:
-        return f"MockCKKSVector(n={len(self._values)}, key={self._key_hash.hex()[:8]}…)"
+        return cls(values=payload["v"], key_hash=bytes.fromhex(payload["k"]))
 
 
-# ---------------------------------------------------------------------------
-# Encrypted reading container
-# ---------------------------------------------------------------------------
 @dataclass
 class EncryptedReading:
-    """
-    The output of HomomorphicEncryptionModule.encrypt().
-
-    Contains:
-      - meter_id, timestamp   : Cleartext metadata (public).
-      - ciphertext_vector     : Serialised CKKS ciphertext of encrypted fields.
-      - encrypted_fields      : Names of the fields in the ciphertext (ordered).
-      - scheme                : "CKKS_TenSEAL" or "MockCKKS".
-      - integrity_tag         : HMAC-SHA256 hex digest of the plaintext fields
-                                (allows server to verify aggregate result).
-    """
-
     meter_id: str
     timestamp: str
-    ciphertext_vector: bytes  # serialised ciphertext
+    ciphertext_vector: bytes
     encrypted_fields: List[str]
     scheme: str
-    integrity_tag: str  # hex-encoded tag
+    integrity_tag: str
     region_id: int
     is_peak_hour: bool
     is_weekend: bool
@@ -195,244 +139,148 @@ class EncryptedReading:
         return json.dumps(self.to_dict(), indent=2)
 
 
-# ---------------------------------------------------------------------------
-# Main module
-# ---------------------------------------------------------------------------
 class HomomorphicEncryptionModule:
     """
-    Encrypts/decrypts MeterReading fields using CKKS homomorphic encryption.
+    CKKS homomorphic encryption — TenSEAL or MockCKKS fallback.
 
-    Provides:
-      - ``encrypt(reading)``        → EncryptedReading
-      - ``decrypt_scalar(ct)``      → float   (single-value ciphertext)
-      - ``aggregate_ciphertexts()`` → EncryptedReading (HE sum)
-      - ``decrypt_aggregate()``     → Dict[str, float] (plaintext sums)
+    Core operation:  Enc(a) + Enc(b) = Enc(a+b)  (additive homomorphism)
 
-    Thread-safe via a per-context lock.
-
-    Parameters
-    ----------
-    config : HEConfig instance.
+    The aggregation server can sum N ciphertexts and return ONE
+    ciphertext whose decryption equals the true sum — without ever
+    seeing individual readings.
     """
 
     def __init__(self, config: Optional[HEConfig] = None) -> None:
         self.config = config or HEConfig()
-        self._lock = threading.Lock()
-        self._context: Optional[Any] = None  # ts.Context when TenSEAL used
-        self._mock_key_hash: bytes = b""
-        self._scheme: str = "uninitialised"
+        self._lock = threading.RLock()
+        self._context: Any = None
+        self._mock_key_hash = b""
+        self._scheme = "uninitialised"
         self._setup_context()
 
-    # ------------------------------------------------------------------
-    # Context setup
-    # ------------------------------------------------------------------
-
     def _setup_context(self) -> None:
-        """Initialise the CKKS context (TenSEAL) or mock key."""
-        if _TENSEAL_AVAILABLE and self.config.use_tenseal:
+        if _TENSEAL and self.config.use_tenseal:
             try:
-                self._context = ts.context(
+                ctx = ts.context(
                     ts.SCHEME_TYPE.CKKS,
                     poly_modulus_degree=self.config.poly_modulus_degree,
                     coeff_mod_bit_sizes=self.config.coeff_mod_bit_sizes,
                 )
-                self._context.global_scale = self.config.global_scale
-                self._context.generate_galois_keys()
+                ctx.global_scale = self.config.global_scale
+                ctx.generate_galois_keys()
+                self._context = ctx
                 self._scheme = "CKKS_TenSEAL"
                 logger.info(
-                    "HEModule: TenSEAL CKKS context initialised | "
-                    "poly_modulus=%d | scale_bits=%d",
+                    "TenSEAL CKKS ready | n=%d | scale_bits=%d",
                     self.config.poly_modulus_degree,
                     self.config.scale_bits,
                 )
-            except Exception as exc:  # pragma: no cover
-                logger.warning("TenSEAL context failed (%s); using mock.", exc)
+            except Exception as exc:
+                logger.warning("TenSEAL init failed (%s) — using MockCKKS.", exc)
                 self._setup_mock()
         else:
             self._setup_mock()
 
     def _setup_mock(self) -> None:
-        """Initialise the mock CKKS backend."""
-        # Derive a deterministic 'key' from the config for reproducibility
-        raw = json.dumps(asdict(self.config), sort_keys=True).encode()
-        self._mock_key_hash = hashlib.sha256(raw).digest()
+        # BUG FIX: use explicit dict, not asdict(config), to avoid issues
+        # with mutable-default List fields in the dataclass.
+        key_src = json.dumps(
+            {
+                "n": self.config.poly_modulus_degree,
+                "bits": self.config.scale_bits,
+                "mock": True,
+            },
+            sort_keys=True,
+        ).encode()
+        self._mock_key_hash = hashlib.sha256(key_src).digest()
         self._scheme = "MockCKKS"
-        logger.info("HEModule: using MockCKKS backend (TenSEAL not available).")
-
-    # ------------------------------------------------------------------
-    # Integrity tag
-    # ------------------------------------------------------------------
+        logger.info(
+            "MockCKKS backend active (research scaffold — not cryptographically secure)."
+        )
 
     def _compute_tag(self, values: List[float]) -> str:
-        """
-        Compute a lightweight integrity tag over plaintext field values.
-        In production this would be replaced by a commitment scheme.
-        """
         packed = struct.pack(f">{len(values)}d", *values)
         return hashlib.sha256(self._mock_key_hash + packed).hexdigest()
 
+    def _encrypt_vector(self, values: List[float]) -> bytes:
+        if self._scheme == "CKKS_TenSEAL" and self._context:
+            return ts.ckks_vector(self._context, values).serialize()
+        return MockCKKSVector(values, self._mock_key_hash).serialise()
+
+    def _decrypt_vector(self, ct: bytes) -> List[float]:
+        if self._scheme == "CKKS_TenSEAL" and self._context:
+            return list(ts.ckks_vector_from(self._context, ct).decrypt())
+        return MockCKKSVector.deserialise(ct).decrypt()
+
+    def _add_ciphertexts(self, b1: bytes, b2: bytes) -> bytes:
+        if self._scheme == "CKKS_TenSEAL" and self._context:
+            return (
+                ts.ckks_vector_from(self._context, b1)
+                + ts.ckks_vector_from(self._context, b2)
+            ).serialize()
+        return (
+            MockCKKSVector.deserialise(b1) + MockCKKSVector.deserialise(b2)
+        ).serialise()
+
     # ------------------------------------------------------------------
-    # Encrypt
-    # ------------------------------------------------------------------
 
-    def encrypt(self, reading: "MeterReading") -> EncryptedReading:  # type: ignore[name-defined]
-        """
-        Encrypt the configured fields of a MeterReading into a CKKS ciphertext.
-
-        Parameters
-        ----------
-        reading : MeterReading (should already be DP-noised).
-
-        Returns
-        -------
-        EncryptedReading with all sensitive numeric fields encrypted.
-        """
-        # Collect plaintext field values in a fixed order
-        values: List[float] = []
-        for fname in self.config.encrypt_fields:
-            v = getattr(reading, fname, 0.0)
-            values.append(float(v) if v is not None else 0.0)
-
-        integrity_tag = self._compute_tag(values)
-
+    def encrypt(self, reading: "MeterReading") -> EncryptedReading:  # type: ignore
+        """Encrypt configured MeterReading fields → EncryptedReading."""
+        values = [
+            float(getattr(reading, f, 0.0) or 0.0) for f in self.config.encrypt_fields
+        ]
+        tag = self._compute_tag(values)
         with self._lock:
-            ciphertext_bytes = self._encrypt_vector(values)
-
-        # Also store the reading's privacy_noise_applied for audit trail
-        enc = EncryptedReading(
+            ct = self._encrypt_vector(values)
+        reading.encrypted_payload = ct[:16]  # 16-byte preview for audit
+        return EncryptedReading(
             meter_id=reading.meter_id,
             timestamp=reading.timestamp,
-            ciphertext_vector=ciphertext_bytes,
+            ciphertext_vector=ct,
             encrypted_fields=list(self.config.encrypt_fields),
             scheme=self._scheme,
-            integrity_tag=integrity_tag,
+            integrity_tag=tag,
             region_id=reading.region_id,
             is_peak_hour=reading.is_peak_hour,
             is_weekend=reading.is_weekend,
             privacy_noise_applied=reading.privacy_noise_applied,
         )
-        # Attach the ciphertext bytes to the original MeterReading as well
-        reading.encrypted_payload = ciphertext_bytes
-        return enc
 
-    def _encrypt_vector(self, values: List[float]) -> bytes:
-        """Low-level: encrypt a list of floats, return serialised bytes."""
-        if self._scheme == "CKKS_TenSEAL" and self._context is not None:
-            ct = ts.ckks_vector(self._context, values)
-            return ct.serialize()
-        else:
-            mock = MockCKKSVector(values, self._mock_key_hash)
-            return mock.serialise()
-
-    # ------------------------------------------------------------------
-    # Decrypt
-    # ------------------------------------------------------------------
-
-    def decrypt_vector(self, ciphertext_bytes: bytes) -> List[float]:
-        """
-        Decrypt a serialised ciphertext back to a list of floats.
-
-        Parameters
-        ----------
-        ciphertext_bytes : Bytes returned by ``encrypt()``.
-
-        Returns
-        -------
-        List of decrypted float values (same order as ``encrypt_fields``).
-        """
+    def decrypt_vector(self, ct: bytes) -> List[float]:
         with self._lock:
-            return self._decrypt_vector(ciphertext_bytes)
-
-    def _decrypt_vector(self, ciphertext_bytes: bytes) -> List[float]:
-        if self._scheme == "CKKS_TenSEAL" and self._context is not None:
-            ct = ts.ckks_vector_from(self._context, ciphertext_bytes)
-            return ct.decrypt()
-        else:
-            mock = MockCKKSVector.deserialise(ciphertext_bytes)
-            return mock.decrypt()
+            return self._decrypt_vector(ct)
 
     def decrypt_reading(self, enc: EncryptedReading) -> Dict[str, float]:
-        """
-        Decrypt an EncryptedReading into a field-name → value mapping.
-
-        Parameters
-        ----------
-        enc : EncryptedReading to decrypt.
-
-        Returns
-        -------
-        Dict mapping each encrypted field name to its plaintext value.
-        """
-        values = self.decrypt_vector(enc.ciphertext_vector)
-        return dict(zip(enc.encrypted_fields, values[: len(enc.encrypted_fields)]))
-
-    # ------------------------------------------------------------------
-    # Homomorphic aggregation
-    # ------------------------------------------------------------------
+        vals = self.decrypt_vector(enc.ciphertext_vector)
+        return {
+            n: round(float(v), 6)
+            for n, v in zip(enc.encrypted_fields, vals[: len(enc.encrypted_fields)])
+        }
 
     def aggregate_ciphertexts(
         self, encrypted_readings: Sequence[EncryptedReading]
     ) -> bytes:
         """
-        Compute the homomorphic SUM of a list of ciphertext vectors.
+        Homomorphically sum ciphertexts without decrypting any individual reading.
 
-        The aggregation server calls this without ever decrypting individual
-        readings.
-
-        Parameters
-        ----------
-        encrypted_readings : Sequence of EncryptedReading objects.
-
-        Returns
-        -------
-        Serialised ciphertext of the element-wise sum.
+        CT_sum = Enc(e₁) ⊕ Enc(e₂) ⊕ … ⊕ Enc(eₙ)  =  Enc(Σ eᵢ)
         """
         if not encrypted_readings:
             raise ValueError("Cannot aggregate an empty sequence.")
-
         with self._lock:
-            if self._scheme == "CKKS_TenSEAL" and self._context is not None:
-                accumulated = ts.ckks_vector_from(
-                    self._context, encrypted_readings[0].ciphertext_vector
-                )
-                for enc in encrypted_readings[1:]:
-                    ct = ts.ckks_vector_from(self._context, enc.ciphertext_vector)
-                    accumulated = accumulated + ct
-                return accumulated.serialize()
-            else:
-                # Mock aggregation
-                accumulated_mock = MockCKKSVector.deserialise(
-                    encrypted_readings[0].ciphertext_vector
-                )
-                for enc in encrypted_readings[1:]:
-                    ct = MockCKKSVector.deserialise(enc.ciphertext_vector)
-                    accumulated_mock = accumulated_mock + ct
-                return accumulated_mock.serialise()
+            acc = encrypted_readings[0].ciphertext_vector
+            for enc in encrypted_readings[1:]:
+                acc = self._add_ciphertexts(acc, enc.ciphertext_vector)
+        logger.debug("HE aggregation: %d ciphertexts → 1.", len(encrypted_readings))
+        return acc
 
     def decrypt_aggregate(
-        self,
-        aggregate_ciphertext: bytes,
-        field_names: Optional[List[str]] = None,
+        self, agg_ct: bytes, field_names: Optional[List[str]] = None
     ) -> Dict[str, float]:
-        """
-        Decrypt an aggregate ciphertext produced by ``aggregate_ciphertexts()``.
-
-        Parameters
-        ----------
-        aggregate_ciphertext : Bytes from ``aggregate_ciphertexts()``.
-        field_names          : Names of the fields (defaults to config.encrypt_fields).
-
-        Returns
-        -------
-        Dict mapping each field name to its aggregate (summed) value.
-        """
+        """Decrypt aggregate ciphertext — only the authorised analyst calls this."""
         names = field_names or self.config.encrypt_fields
-        values = self.decrypt_vector(aggregate_ciphertext)
-        return {name: round(val, 6) for name, val in zip(names, values[: len(names)])}
-
-    # ------------------------------------------------------------------
-    # Utilities
-    # ------------------------------------------------------------------
+        vals = self.decrypt_vector(agg_ct)
+        return {n: round(float(v), 6) for n, v in zip(names, vals[: len(names)])}
 
     @property
     def scheme_name(self) -> str:
@@ -440,15 +288,14 @@ class HomomorphicEncryptionModule:
 
     @property
     def is_real_he(self) -> bool:
-        """True if using the real TenSEAL CKKS backend."""
         return self._scheme == "CKKS_TenSEAL"
 
     def context_summary(self) -> Dict[str, Any]:
-        """Return a summary of the HE context for logging / audit."""
         return {
             "scheme": self._scheme,
-            "tenseal_available": _TENSEAL_AVAILABLE,
+            "tenseal_available": _TENSEAL,
             "poly_modulus_degree": self.config.poly_modulus_degree,
             "scale_bits": self.config.scale_bits,
             "encrypt_fields": self.config.encrypt_fields,
+            "is_real_crypto": self.is_real_he,
         }
