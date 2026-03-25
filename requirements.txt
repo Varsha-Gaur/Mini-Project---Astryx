@@ -1,36 +1,17 @@
-# ============================================================
 # SecureGrid — Hybrid HE + DP Smart Grid Aggregation
-# Requirements
-# ============================================================
-
-# ── Core data science ────────────────────────────────────────
+# Core
 numpy>=1.24.0
 pandas>=2.0.0
-
-# ── Dashboard ────────────────────────────────────────────────
+# Dashboard
 streamlit>=1.32.0
 plotly>=5.20.0
-
-# ── API server ───────────────────────────────────────────────
+# API server (optional)
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.5.0
-httpx>=0.27.0              # for pipeline→server HTTP calls
-
-# ── Homomorphic encryption (choose one or both) ──────────────
-# Option A: Pyfhel wraps Microsoft SEAL (recommended for research)
-Pyfhel>=3.4.1
-
-# Option B: TenSEAL (alternative CKKS implementation)
+# Homomorphic encryption (optional — MockHE used if absent)
 # tenseal>=0.3.14
-
-# ── Differential privacy (optional validated backend) ────────
-# diffprivlib>=0.6.4       # IBM validated DP library
-
-# ── Utilities ────────────────────────────────────────────────
-python-multipart>=0.0.9    # FastAPI file uploads
-sse-starlette>=1.8.2       # Server-Sent Events for streaming
-
-# ── Development / testing ────────────────────────────────────
-# pytest>=8.0.0
-# pytest-asyncio>=0.23.0
+# Differential privacy validated backend (optional — numpy fallback if absent)
+# diffprivlib>=0.6.4
+# HTTP client
+httpx>=0.27.0
