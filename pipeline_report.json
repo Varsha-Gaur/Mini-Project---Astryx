@@ -1,0 +1,208 @@
+{
+  "pipeline": "SecureGrid Hybrid HE + DP",
+  "timestamp": "2026-03-20T15:16:51Z",
+  "parameters": {
+    "num_meters": 5,
+    "samples": 30,
+    "epsilon": 1.0,
+    "he_scheme": "MockCKKS"
+  },
+  "aggregation": {
+    "n_readings": 30,
+    "he_aggregate_totals": {
+      "energy_usage": 62.1122,
+      "voltage": 6981.5376,
+      "current": 234.2204
+    },
+    "aggregation_time_s": 0.0005,
+    "scheme": "MockCKKS"
+  },
+  "analytics": {
+    "summary": {
+      "total_readings": 30,
+      "active_meters": 20,
+      "regions": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "total_kwh": 62.1122,
+      "avg_kwh": 2.070407,
+      "avg_voltage": 232.72,
+      "avg_current": 7.807
+    },
+    "regional": [
+      {
+        "region_id": 2,
+        "total_kwh": 14.7544,
+        "avg_kwh": 2.459067,
+        "meter_count": 4,
+        "share_pct": 23.75
+      },
+      {
+        "region_id": 0,
+        "total_kwh": 12.3904,
+        "avg_kwh": 2.065067,
+        "meter_count": 4,
+        "share_pct": 19.95
+      },
+      {
+        "region_id": 3,
+        "total_kwh": 12.3245,
+        "avg_kwh": 2.054083,
+        "meter_count": 4,
+        "share_pct": 19.84
+      },
+      {
+        "region_id": 1,
+        "total_kwh": 11.9529,
+        "avg_kwh": 1.99215,
+        "meter_count": 4,
+        "share_pct": 19.24
+      },
+      {
+        "region_id": 4,
+        "total_kwh": 10.69,
+        "avg_kwh": 1.781667,
+        "meter_count": 4,
+        "share_pct": 17.21
+      }
+    ],
+    "top_consumers": [
+      {
+        "meter_id": "meter_006",
+        "region_id": 1,
+        "mean_kwh": 3.3565,
+        "std_kwh": 1.5554,
+        "min_kwh": 2.2567,
+        "max_kwh": 4.4563,
+        "total_kwh": 6.713,
+        "reading_count": 2,
+        "avg_voltage": 226.424,
+        "avg_current": 11.2962
+      },
+      {
+        "meter_id": "meter_002",
+        "region_id": 2,
+        "mean_kwh": 2.6936,
+        "std_kwh": 0.3013,
+        "min_kwh": 2.4806,
+        "max_kwh": 2.9067,
+        "total_kwh": 5.3873,
+        "reading_count": 2,
+        "avg_voltage": 226.501,
+        "avg_current": 7.1294
+      },
+      {
+        "meter_id": "meter_003",
+        "region_id": 3,
+        "mean_kwh": 2.42,
+        "std_kwh": 2.0264,
+        "min_kwh": 0.9871,
+        "max_kwh": 3.8528,
+        "total_kwh": 4.8399,
+        "reading_count": 2,
+        "avg_voltage": 232.8432,
+        "avg_current": 4.503
+      },
+      {
+        "meter_id": "meter_004",
+        "region_id": 4,
+        "mean_kwh": 2.2309,
+        "std_kwh": 0.6037,
+        "min_kwh": 1.804,
+        "max_kwh": 2.6578,
+        "total_kwh": 4.4618,
+        "reading_count": 2,
+        "avg_voltage": 234.4038,
+        "avg_current": 10.4103
+      },
+      {
+        "meter_id": "meter_001",
+        "region_id": 1,
+        "mean_kwh": 2.1242,
+        "std_kwh": 0.8024,
+        "min_kwh": 1.5569,
+        "max_kwh": 2.6916,
+        "total_kwh": 4.2485,
+        "reading_count": 2,
+        "avg_voltage": 227.7242,
+        "avg_current": 4.4137
+      },
+      {
+        "meter_id": "meter_015",
+        "region_id": 0,
+        "mean_kwh": 4.0944,
+        "std_kwh": NaN,
+        "min_kwh": 4.0944,
+        "max_kwh": 4.0944,
+        "total_kwh": 4.0944,
+        "reading_count": 1,
+        "avg_voltage": 247.6328,
+        "avg_current": 5.8647
+      },
+      {
+        "meter_id": "meter_013",
+        "region_id": 3,
+        "mean_kwh": 3.769,
+        "std_kwh": NaN,
+        "min_kwh": 3.769,
+        "max_kwh": 3.769,
+        "total_kwh": 3.769,
+        "reading_count": 1,
+        "avg_voltage": 233.9536,
+        "avg_current": 6.9496
+      },
+      {
+        "meter_id": "meter_007",
+        "region_id": 2,
+        "mean_kwh": 1.878,
+        "std_kwh": 0.0725,
+        "min_kwh": 1.8267,
+        "max_kwh": 1.9293,
+        "total_kwh": 3.756,
+        "reading_count": 2,
+        "avg_voltage": 238.6854,
+        "avg_current": 8.2262
+      },
+      {
+        "meter_id": "meter_008",
+        "region_id": 3,
+        "mean_kwh": 1.8578,
+        "std_kwh": 2.1137,
+        "min_kwh": 0.3632,
+        "max_kwh": 3.3524,
+        "total_kwh": 3.7156,
+        "reading_count": 2,
+        "avg_voltage": 231.8803,
+        "avg_current": 9.4158
+      },
+      {
+        "meter_id": "meter_000",
+        "region_id": 0,
+        "mean_kwh": 1.8117,
+        "std_kwh": 0.6183,
+        "min_kwh": 1.3745,
+        "max_kwh": 2.2489,
+        "total_kwh": 3.6234,
+        "reading_count": 2,
+        "avg_voltage": 223.4272,
+        "avg_current": 8.0822
+      }
+    ],
+    "anomalies": [],
+    "privacy_analysis": {
+      "mae": 0.979083,
+      "rmse": 1.267675,
+      "max_error": 2.5029,
+      "mean_noise": 0.26357,
+      "std_noise": 1.239972,
+      "relative_error_pct": 54.1877,
+      "privacy_utility_score": 0.701599,
+      "n_samples": 30
+    }
+  },
+  "elapsed_s": 0.07
+}
