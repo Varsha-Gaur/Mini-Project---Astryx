@@ -156,7 +156,3 @@ total   = CKKS.decrypt(CT_sum)                    # authorised analyst only
 | 8 | All | No package structure, no `config.py`, `main.py`, `analytics/`, `README.md` | All added |
 
 ---
-
-## License
-
-MIT — University Research Prototype
