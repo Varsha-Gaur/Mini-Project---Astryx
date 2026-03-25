@@ -141,18 +141,3 @@ total   = CKKS.decrypt(CT_sum)                    # authorised analyst only
 | diffprivlib | Validated DP | `pip install diffprivlib` |
 
 ---
-
-## Code Review — Bugs Fixed vs Uploaded Files
-
-| # | File | Bug | Fix |
-|---|------|-----|-----|
-| 1 | `api_server.py:86` | `from smart_meter_simulator import` — wrong module name (was `simulator.py`) | Corrected to `from simulator.smart_meter_simulator import` |
-| 2 | `api_server.py:112` | `from kafka_producer import` — module never existed | Removed; Kafka is optional |
-| 3 | `api_server.py:468` | `asyncio.get_event_loop()` deprecated/broken in Python 3.12+ | Replaced with `asyncio.get_running_loop()` |
-| 4 | `simulator.py:514` | `self.he_module.encrypt(reading)` return value discarded | Captured: `enc = self.he_module.encrypt(reading)` |
-| 5 | `dp_module.py:315` | Gaussian `_perturb_field` drew from wrong scale | Rewrote using separate `_draw_noise(sensitivity)` per field |
-| 6 | `he_module.py:257` | `asdict(self.config)` fails with mutable List defaults | Replaced with explicit dict |
-| 7 | `simulator.py:343` | `dataset_path` mandatory even for synthetic runs | Added default `"household_power_consumption.txt"` |
-| 8 | All | No package structure, no `config.py`, `main.py`, `analytics/`, `README.md` | All added |
-
----
