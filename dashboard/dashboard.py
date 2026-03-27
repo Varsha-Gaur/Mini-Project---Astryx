@@ -100,7 +100,7 @@ def _css() -> str:
 .stApp{{background-color:var(--bg-base);color:var(--text);font-family:'Exo 2',sans-serif;background-image:radial-gradient(circle,rgba(14,165,233,.055) 1px,transparent 1px);background-size:28px 28px;animation:grid-move 9s linear infinite;}}
 .stApp::before{{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0,rgba(0,0,0,0) 2px,rgba(0,8,22,.1) 2px,rgba(0,8,22,.1) 4px);pointer-events:none;z-index:0;}}
 .main .block-container{{padding:1.4rem 2.1rem 3rem;max-width:1500px;position:relative;z-index:1;}}
-#MainMenu,footer,header{{visibility:hidden;}}.stDeployButton{{display:none;}}
+#MainMenu{{visibility:hidden;}}footer{{visibility:hidden;}}.stDeployButton{{display:none;}}[data-testid="stToolbar"]{{visibility:hidden;}}[data-testid="stDecoration"]{{display:none;}}[data-testid="collapsedControl"]{{visibility:visible !important;display:flex !important;}}header button{{visibility:visible !important;}}
 section[data-testid="stSidebar"]{{background:linear-gradient(180deg,#04091a 0%,#060d1f 100%);border-right:1px solid var(--bg-border);box-shadow:4px 0 24px rgba(14,165,233,.07);}}
 .hero{{background:linear-gradient(135deg,#050e1f 0%,#071628 50%,#050e1f 100%);border:1px solid var(--bg-border);border-top:2px solid var(--blue);border-radius:16px;padding:2.3rem 3rem;margin-bottom:1.5rem;position:relative;overflow:hidden;animation:slide-down .5s ease both;}}
 .hero-eyebrow{{font-family:'Share Tech Mono',monospace;font-size:.64rem;letter-spacing:.32em;color:var(--blue);text-transform:uppercase;margin-bottom:.45rem;}}
@@ -783,15 +783,11 @@ def render_sidebar(df):
     )
     c1, c2 = sb.columns(2)
     with c1:
-        st.markdown('<div class="btn-start">', unsafe_allow_html=True)
         if st.button("▶ START", key="btn_start", use_container_width=True):
             st.session_state.simulating = True
-        st.markdown("</div>", unsafe_allow_html=True)
     with c2:
-        st.markdown('<div class="btn-stop">', unsafe_allow_html=True)
         if st.button("■ STOP", key="btn_stop", use_container_width=True):
             st.session_state.simulating = False
-        st.markdown("</div>", unsafe_allow_html=True)
     if st.session_state.simulating:
         sb.markdown(
             f'<div style="margin:.4rem 0;"><span class="badge b-live"><span class="dot dot-g"></span>LIVE · TICK #{st.session_state.tick}</span></div>',
