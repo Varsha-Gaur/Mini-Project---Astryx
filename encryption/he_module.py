@@ -1,4 +1,17 @@
 """
+Homomorphic Encryption Module
+
+Implements CKKS-based homomorphic encryption using:
+- TenSEAL (real encryption)
+- MockCKKS (fallback for testing)
+
+Supports:
+- Encryption of meter readings
+- Homomorphic aggregation (sum without decryption)
+- Secure decryption by authorized users
+"""
+
+"""
 encryption/he_module.py
 ========================
 Homomorphic Encryption Module — fixed and improved from uploaded he_module.py
