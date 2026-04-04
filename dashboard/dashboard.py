@@ -1127,17 +1127,849 @@ def s_advanced(df, sel_m):
 
 
 # ── Main ─────────────────────────────────────────────────────────
+
+# This file contains only the additions — it will be merged into dashboard_base.py
+
+import sys, os, time, secrets, hmac as _hmac, hashlib
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+# ── Security palette additions ─────────────────────────────────
+SEC = dict(
+    threat_critical="#ef4444",
+    threat_high="#f97316",
+    threat_medium="#f59e0b",
+    threat_low="#22c55e",
+    threat_none="#22c55e",
+    panel_dark="#04080f",
+    panel_border="#1a0a1e",
+)
+
+
+# ── Security CSS additions ─────────────────────────────────────
+def _sec_css():
+    return f"""
+<style>
+@keyframes threat-pulse-red{{0%,100%{{box-shadow:0 0 10px rgba(239,68,68,.6),0 0 30px rgba(239,68,68,.2);}}50%{{box-shadow:0 0 22px rgba(239,68,68,1),0 0 55px rgba(239,68,68,.35);}}}}
+@keyframes threat-pulse-orange{{0%,100%{{box-shadow:0 0 8px rgba(249,115,22,.5);}}50%{{box-shadow:0 0 20px rgba(249,115,22,.9);}}}}
+@keyframes scan-line{{0%{{top:-5%;}}100%{{top:105%;}}}}
+.sec-panel{{background:linear-gradient(145deg,{SEC["panel_dark"]},#08050f);border:1px solid {SEC["panel_border"]};border-radius:14px;padding:1.3rem 1.5rem;position:relative;overflow:hidden;}}
+.sec-panel::before{{content:'';position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(239,68,68,.5),transparent);animation:scan-line 4s linear infinite;}}
+.threat-critical{{border-top:2px solid #ef4444 !important;animation:threat-pulse-red 2s ease-in-out infinite;}}
+.threat-high    {{border-top:2px solid #f97316 !important;animation:threat-pulse-orange 2s ease-in-out infinite;}}
+.threat-medium  {{border-top:2px solid #f59e0b !important;}}
+.threat-low     {{border-top:2px solid #22c55e !important;}}
+.alert-row{{display:flex;align-items:flex-start;gap:.65rem;padding:.55rem .7rem;border-radius:7px;margin-bottom:.4rem;font-family:'Exo 2',sans-serif;font-size:.78rem;line-height:1.4;}}
+.alert-critical{{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);}}
+.alert-warning {{background:rgba(249,115,22,.09);border:1px solid rgba(249,115,22,.3);}}
+.alert-info    {{background:rgba(14,165,233,.07);border:1px solid rgba(14,165,233,.2);}}
+.alert-ok      {{background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.2);}}
+.alert-icon{{font-size:1rem;line-height:1.4;flex-shrink:0;}}
+.alert-body{{flex:1;}}
+.alert-meta{{font-family:'Share Tech Mono',monospace;font-size:.6rem;letter-spacing:.08em;opacity:.6;margin-top:.15rem;}}
+.threat-meter{{display:flex;align-items:center;gap:.7rem;padding:.7rem 1rem;border-radius:10px;background:rgba(0,0,0,.3);margin-bottom:.6rem;}}
+.threat-bar-bg{{flex:1;height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;}}
+.threat-bar-fill{{height:100%;border-radius:4px;transition:width .5s ease;}}
+.stat-pill{{display:inline-flex;align-items:center;gap:.35rem;background:rgba(0,0,0,.3);border-radius:6px;padding:.3rem .8rem;font-family:'Share Tech Mono',monospace;font-size:.65rem;letter-spacing:.08em;margin:.2rem;}}
+.attack-card{{background:linear-gradient(135deg,#080510,#0a0618);border-radius:12px;padding:1rem 1.2rem;margin-bottom:.6rem;transition:transform .2s;}}
+.attack-card:hover{{transform:translateY(-2px);}}
+.attack-card.blocked{{border:1px solid rgba(34,197,94,.35);}}
+.attack-card.warned {{border:1px solid rgba(249,115,22,.35);}}
+.attack-card.failed {{border:1px solid rgba(239,68,68,.35);}}
+</style>"""
+
+
+# ── Lightweight standalone security state (no external imports) ──
+class _SecurityState:
+    """
+    Self-contained security simulation state stored in session_state.
+    No dependency on security_core.py — works standalone.
+    """
+
+    def __init__(self):
+        self.events: List[Dict] = []
+        self.attack_results: List[Dict] = []
+        self.nonce_store: dict = {}
+        self.rate_counts: dict = defaultdict(int)
+        self.auth_failures: dict = defaultdict(int)
+        self.anomaly_scores: dict = defaultdict(list)
+        self.registered_meters: set = set()
+        # Pre-register 20 meters
+        for i in range(20):
+            self.registered_meters.add(f"meter_{i:03d}")
+
+    def add_event(self, severity, etype, meter_id, description, extra=None):
+        now = time.time()
+        self.events.append(
+            {
+                "timestamp": now,
+                "time_str": time.strftime("%H:%M:%S", time.localtime(now)),
+                "severity": severity,
+                "event_type": etype,
+                "meter_id": meter_id,
+                "description": description,
+                **(extra or {}),
+            }
+        )
+        if len(self.events) > 500:
+            self.events.pop(0)
+
+    def threat_level(self):
+        recent = self.events[-20:] if self.events else []
+        crits = sum(1 for e in recent if e["severity"] == "CRITICAL")
+        warns = sum(1 for e in recent if e["severity"] == "WARNING")
+        if crits >= 3:
+            return "CRITICAL", "#ef4444"
+        if crits >= 1:
+            return "HIGH", "#f97316"
+        if warns >= 3:
+            return "MEDIUM", "#f59e0b"
+        return "LOW", "#22c55e"
+
+    def counts(self):
+        c = defaultdict(int)
+        for e in self.events:
+            c[e["event_type"]] += 1
+        return dict(c)
+
+    def simulate_attack(self, attack_type: str, meter_id: str):
+        """Simulate a specific attack and log detection events."""
+        import random, secrets as _sec
+
+        if attack_type == "REPLAY":
+            self.add_event(
+                "CRITICAL",
+                "REPLAY",
+                meter_id,
+                f"Replay detected: duplicate nonce from {meter_id} — packet REJECTED",
+                {"detail": "Nonce already consumed within 30s window"},
+            )
+
+        elif attack_type == "TAMPER":
+            fake_e = round(random.uniform(15, 22), 4)
+            self.add_event(
+                "CRITICAL",
+                "TAMPER",
+                meter_id,
+                f"Data tampering: {meter_id} energy={fake_e}kW exceeds 12.5kW threshold — BLOCKED",
+                {"forged_value": fake_e, "detail": "HMAC verification failed"},
+            )
+
+        elif attack_type == "MITM":
+            self.add_event(
+                "CRITICAL",
+                "MITM",
+                meter_id,
+                f"MITM detected: {meter_id} signature mismatch (foreign key) — REJECTED",
+                {"detail": "Server key ≠ attacker key"},
+            )
+
+        elif attack_type == "AUTH_FAIL":
+            self.auth_failures[meter_id] += 1
+            self.add_event(
+                "WARNING",
+                "AUTH_FAIL",
+                meter_id,
+                f"Authentication failure #{self.auth_failures[meter_id]} from {meter_id}",
+                {"attempts": self.auth_failures[meter_id]},
+            )
+
+        elif attack_type == "ANOMALY":
+            z = round(random.uniform(3.6, 6.5), 2)
+            e = round(random.uniform(12, 20), 4)
+            self.anomaly_scores[meter_id].append(z)
+            self.add_event(
+                "WARNING",
+                "ANOMALY",
+                meter_id,
+                f"Anomalous reading from {meter_id}: {e} kW (z={z}σ)",
+                {"z_score": z, "energy": e},
+            )
+
+        elif attack_type == "INFERENCE":
+            self.add_event(
+                "WARNING",
+                "INFERENCE",
+                meter_id,
+                f"Inference attempt on {meter_id} — DP noise disrupted reconstruction (ε=1.0)",
+                {"detail": "Error > 0.3 kW after DP noise"},
+            )
+
+        elif attack_type == "RATE_LIMIT":
+            self.rate_counts[meter_id] += 1
+            self.add_event(
+                "WARNING",
+                "RATE_LIMIT",
+                meter_id,
+                f"Rate limit exceeded: {meter_id} sent 62 requests/min (max=60) — THROTTLED",
+                {"rpm": 62},
+            )
+
+
+def _init_security():
+    if "sec" not in st.session_state:
+        st.session_state.sec = _SecurityState()
+        # Seed with a few initial OK events
+        for i in range(5):
+            mid = f"meter_{i:03d}"
+            st.session_state.sec.add_event(
+                "INFO", "OK", mid, f"Meter {mid} authenticated successfully"
+            )
+    return st.session_state.sec
+
+
+# ── Security chart builders ────────────────────────────────────
+
+
+def chart_attack_timeline(events: List[Dict]) -> "go.Figure":
+    """Bar chart of security events by type over the last 50 events."""
+    if not events:
+        return go.Figure()
+    import pandas as pd
+
+    df = pd.DataFrame(events[-50:])
+    color_map = {
+        "CRITICAL": P["crimson"],
+        "WARNING": P["amber"],
+        "INFO": P["green"],
+        "OK": P["green"],
+    }
+    df["color"] = df["severity"].map(lambda s: color_map.get(s, P["blue"]))
+    fig = go.Figure()
+    for sev, col in [
+        ("CRITICAL", P["crimson"]),
+        ("WARNING", P["amber"]),
+        ("INFO", P["blue"]),
+    ]:
+        sub = df[df["severity"] == sev] if "severity" in df.columns else pd.DataFrame()
+        if len(sub):
+            fig.add_trace(
+                go.Bar(
+                    x=sub["time_str"],
+                    y=[1] * len(sub),
+                    name=sev,
+                    marker_color=col,
+                    opacity=0.85,
+                    hovertemplate=(
+                        "<b>%{customdata[0]}</b><br>%{customdata[1]}<br>"
+                        "%{x}<extra></extra>"
+                    ),
+                    customdata=list(
+                        zip(sub["event_type"].tolist(), sub["description"].tolist())
+                    ),
+                )
+            )
+    fig.update_layout(
+        **_L(
+            200,
+            title=dict(
+                text="Security Event Timeline",
+                font=dict(size=11, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            barmode="stack",
+            showlegend=True,
+            xaxis=dict(showticklabels=False, gridcolor="rgba(0,0,0,0)"),
+            yaxis=dict(showticklabels=False, gridcolor="rgba(0,0,0,0)"),
+            margin=dict(l=10, r=10, t=36, b=10),
+        )
+    )
+    return fig
+
+
+def chart_anomaly_scores(sec: "_SecurityState", sel_m: List[str]) -> "go.Figure":
+    """Line chart of running anomaly Z-scores per meter."""
+    fig = go.Figure()
+    for i, mid in enumerate(sel_m[:8]):
+        scores = sec.anomaly_scores.get(mid, [])
+        if scores:
+            fig.add_trace(
+                go.Scatter(
+                    y=scores,
+                    mode="lines+markers",
+                    name=mid,
+                    line=dict(width=1.8, color=_PAL[i % len(_PAL)]),
+                    marker=dict(size=5),
+                    hovertemplate=f"<b>{mid}</b><br>z=%{{y:.2f}}σ<extra></extra>",
+                )
+            )
+    # Draw threshold line
+    if any(sec.anomaly_scores.get(m) for m in sel_m[:8]):
+        max_len = max((len(v) for v in sec.anomaly_scores.values() if v), default=1)
+        fig.add_trace(
+            go.Scatter(
+                x=list(range(max_len)),
+                y=[3.5] * max_len,
+                name="Threshold (3.5σ)",
+                mode="lines",
+                line=dict(color=P["crimson"], width=1.5, dash="dash"),
+            )
+        )
+    fig.update_layout(
+        **_L(
+            260,
+            title=dict(
+                text="Anomaly Z-Score per Meter",
+                font=dict(size=11, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            xaxis_title="Reading #",
+            yaxis_title="Z-Score (σ)",
+        )
+    )
+    return fig
+
+
+def chart_auth_failures(sec: "_SecurityState") -> "go.Figure":
+    """Bar chart of authentication failures per meter."""
+    if not sec.auth_failures:
+        return go.Figure()
+    mids = list(sec.auth_failures.keys())
+    counts = [sec.auth_failures[m] for m in mids]
+    colors = [
+        P["crimson"] if c >= 3 else P["amber"] if c >= 1 else P["green"] for c in counts
+    ]
+    fig = go.Figure(
+        go.Bar(
+            x=mids,
+            y=counts,
+            marker_color=colors,
+            opacity=0.85,
+            text=counts,
+            textposition="outside",
+            textfont=dict(size=10, color=P["text"], family="Share Tech Mono"),
+            hovertemplate="<b>%{x}</b><br>Failures: %{y}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        **_L(
+            240,
+            title=dict(
+                text="Auth Failures per Meter",
+                font=dict(size=11, color=P["text"], family="Orbitron"),
+                x=0,
+            ),
+            showlegend=False,
+            bargap=0.3,
+            xaxis=dict(tickfont=dict(size=8, family="Share Tech Mono")),
+        )
+    )
+    return fig
+
+
+def chart_attack_radar(counts: Dict[str, int]) -> "go.Figure":
+    """Radar chart of attack type frequencies."""
+    labels = [
+        "REPLAY",
+        "TAMPER",
+        "MITM",
+        "AUTH_FAIL",
+        "ANOMALY",
+        "INFERENCE",
+        "RATE_LIMIT",
+    ]
+    values = [counts.get(l, 0) for l in labels]
+    if sum(values) == 0:
+        values = [0] * len(labels)
+    fig = go.Figure(
+        go.Scatterpolar(
+            r=values + [values[0]],
+            theta=labels + [labels[0]],
+            fill="toself",
+            fillcolor="rgba(239,68,68,.15)",
+            line=dict(color=P["crimson"], width=2),
+            mode="lines+markers",
+            marker=dict(size=6, color=P["crimson"]),
+            hovertemplate="<b>%{theta}</b><br>Count: %{r}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=280,
+        paper_bgcolor="rgba(0,0,0,0)",
+        polar=dict(
+            bgcolor="rgba(6,13,26,.88)",
+            radialaxis=dict(
+                visible=True,
+                gridcolor="rgba(239,68,68,.2)",
+                tickfont=dict(size=8, color=P["text_mid"]),
+                showline=False,
+            ),
+            angularaxis=dict(
+                gridcolor="rgba(239,68,68,.2)",
+                tickfont=dict(size=9, color=P["text_mid"], family="Share Tech Mono"),
+            ),
+        ),
+        margin=dict(l=40, r=40, t=30, b=30),
+        showlegend=False,
+    )
+    return fig
+
+
+# ── Security section renderers ────────────────────────────────
+
+
+def s_threat_banner(sec: "_SecurityState"):
+    """Full-width threat level banner."""
+    level, color = sec.threat_level()
+    counts = sec.counts()
+    total = sum(counts.values())
+    crits = counts.get("TAMPER", 0) + counts.get("REPLAY", 0) + counts.get("MITM", 0)
+    warns = (
+        counts.get("AUTH_FAIL", 0)
+        + counts.get("ANOMALY", 0)
+        + counts.get("RATE_LIMIT", 0)
+    )
+    ok_cnt = counts.get("OK", 0) + counts.get("INFERENCE", 0)
+
+    threat_class = f"threat-{level.lower()}"
+    icon = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(
+        level, "🟢"
+    )
+
+    bar_pct = {"CRITICAL": "92", "HIGH": "65", "MEDIUM": "38", "LOW": "12"}.get(
+        level, "12"
+    )
+    bar_color = color
+
+    st.markdown(
+        f"""
+    <div class="sec-panel {threat_class}" style="margin-bottom:1rem;">
+      <div style="display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap;">
+        <div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:.6rem;letter-spacing:.2em;color:{P["text_dim"]};text-transform:uppercase;margin-bottom:.25rem;">CURRENT THREAT LEVEL</div>
+          <div style="font-family:'Orbitron',sans-serif;font-size:1.5rem;font-weight:700;color:{color};">{icon} {level}</div>
+        </div>
+        <div class="threat-meter" style="flex:1;min-width:180px;">
+          <div class="threat-bar-bg"><div class="threat-bar-fill" style="width:{bar_pct}%;background:{bar_color};"></div></div>
+          <span style="font-family:'Share Tech Mono',monospace;font-size:.68rem;color:{color};">{bar_pct}%</span>
+        </div>
+        <div style="display:flex;gap:.4rem;flex-wrap:wrap;">
+          <span class="stat-pill" style="color:{P["crimson"]};">💀 CRITICAL: {crits}</span>
+          <span class="stat-pill" style="color:{P["amber"]};">⚠ WARNINGS: {warns}</span>
+          <span class="stat-pill" style="color:{P["green"]};">✓ ACCEPTED: {ok_cnt}</span>
+          <span class="stat-pill" style="color:{P["blue2"]};">📊 TOTAL: {total}</span>
+        </div>
+      </div>
+    </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def s_live_alerts(sec: "_SecurityState"):
+    """Scrolling live alert feed."""
+    _sec2("🚨", "LIVE SECURITY ALERTS", "REAL-TIME FEED")
+    events = list(reversed(sec.events[-15:]))
+    if not events:
+        st.markdown(
+            f'<div style="color:{P["text_dim"]};font-size:.8rem;padding:.5rem;">No security events yet. Run an attack simulation to populate this feed.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    icon_map = {
+        "CRITICAL": ("🔴", "alert-critical"),
+        "WARNING": ("🟠", "alert-warning"),
+        "INFO": ("🔵", "alert-info"),
+    }
+    for ev in events:
+        sev = ev.get("severity", "INFO")
+        ico, cls = icon_map.get(sev, ("⚪", "alert-info"))
+        etype = ev.get("event_type", "")
+        etype_colors = {
+            "REPLAY": "#38bdf8",
+            "TAMPER": "#ef4444",
+            "MITM": "#ef4444",
+            "AUTH_FAIL": "#f59e0b",
+            "ANOMALY": "#f59e0b",
+            "INFERENCE": "#a78bfa",
+            "RATE_LIMIT": "#f97316",
+            "OK": "#4ade80",
+            "TRAFFIC_ANALYSIS": "#22d3ee",
+        }
+        etype_color = etype_colors.get(etype, P["text_mid"])
+        st.markdown(
+            f"""
+        <div class="alert-row {cls}">
+          <span class="alert-icon">{ico}</span>
+          <div class="alert-body">
+            <div><span style="font-family:'Share Tech Mono',monospace;font-size:.65rem;color:{etype_color};font-weight:600;margin-right:.5rem;">[{etype}]</span>
+            <span style="color:{P["text"]};">{ev["description"]}</span></div>
+            <div class="alert-meta">🕐 {ev["time_str"]} · meter: {ev["meter_id"]}</div>
+          </div>
+        </div>""",
+            unsafe_allow_html=True,
+        )
+
+
+def s_attack_results(sec: "_SecurityState"):
+    """Attack simulation results — run all 5 attacks and show outcomes."""
+    _sec2("⚔️", "ATTACK SIMULATION RESULTS", "CYBER THREAT SCENARIOS")
+
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from attack_simulator import run_all_attacks
+
+        results = [r.to_dict() for r in run_all_attacks(gateway=None)]
+        use_real = True
+    except ImportError:
+        use_real = False
+        results = _builtin_attack_results()
+
+    for r in results:
+        success_u = r.get("succeeded_unprotected", True)
+        detected = r.get("detected_protected", True)
+        sev = r.get("severity", "HIGH")
+        card_cls = "blocked" if detected else ("warned" if success_u else "failed")
+        u_icon = "✅ Succeeded" if success_u else "❌ Failed"
+        d_icon = "🛡 DETECTED & BLOCKED" if detected else "⚠️ Residual risk"
+        sev_col = {
+            "CRITICAL": P["crimson"],
+            "HIGH": P["orange"],
+            "MEDIUM": P["amber"],
+            "LOW": P["green"],
+        }.get(sev, P["amber"])
+
+        st.markdown(
+            f"""
+        <div class="attack-card {card_cls}">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem;margin-bottom:.5rem;">
+            <div>
+              <span style="font-family:'Orbitron',sans-serif;font-size:.7rem;color:{P["text"]};font-weight:600;">{r["attack_name"]}</span>
+              <span style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:{sev_col};margin-left:.6rem;border:1px solid {sev_col};border-radius:3px;padding:1px 7px;">{sev}</span>
+            </div>
+            <span style="font-family:'Share Tech Mono',monospace;font-size:.62rem;color:{P["green2"] if detected else P["crimson"]};">{d_icon}</span>
+          </div>
+          <div style="font-size:.76rem;color:{P["text_dim"]};margin-bottom:.4rem;">{r["description"]}</div>
+          <div style="display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.72rem;">
+            <div><span style="color:{P["text_dim"]};">Unprotected: </span><span style="color:{P["amber"] if success_u else P["green"]};">{u_icon}</span></div>
+            <div><span style="color:{P["text_dim"]};">Defence: </span><span style="color:{P["cyan2"]};font-family:'Share Tech Mono',monospace;font-size:.65rem;">{r["detection_mechanism"]}</span></div>
+          </div>
+        </div>""",
+            unsafe_allow_html=True,
+        )
+
+
+def _builtin_attack_results() -> List[Dict]:
+    """Fallback results used if attack_simulator.py is not found."""
+    return [
+        {
+            "attack_name": "Data Inference",
+            "description": "Reconstruct individual usage from aggregate differences.",
+            "succeeded_unprotected": True,
+            "detected_protected": True,
+            "detection_mechanism": "Differential Privacy (ε=1.0)",
+            "severity": "HIGH",
+            "attacker_result": "Error=0.003 kW (unprotected)",
+            "defender_action": "DP noise → error=0.41 kW (inference disrupted)",
+        },
+        {
+            "attack_name": "Replay Attack",
+            "description": "Re-submit old valid packet to inflate aggregate.",
+            "succeeded_unprotected": True,
+            "detected_protected": True,
+            "detection_mechanism": "Nonce uniqueness + timestamp window",
+            "severity": "CRITICAL",
+            "attacker_result": "Duplicate accepted (unprotected)",
+            "defender_action": "Nonce already consumed — REJECTED",
+        },
+        {
+            "attack_name": "Data Tampering",
+            "description": "Inflate energy reading ×10 in transit.",
+            "succeeded_unprotected": True,
+            "detected_protected": True,
+            "detection_mechanism": "HMAC-SHA-256 signature",
+            "severity": "CRITICAL",
+            "attacker_result": "Inflated value accepted (no sig check)",
+            "defender_action": "HMAC mismatch → TAMPER DETECTED",
+        },
+        {
+            "attack_name": "Man-in-the-Middle",
+            "description": "Intercept, modify, re-sign with attacker key.",
+            "succeeded_unprotected": True,
+            "detected_protected": True,
+            "detection_mechanism": "Server-side key derivation (no master secret)",
+            "severity": "CRITICAL",
+            "attacker_result": "Forged packet forwarded",
+            "defender_action": "Attacker key ≠ server key → REJECTED",
+        },
+        {
+            "attack_name": "Traffic Analysis",
+            "description": "Infer occupancy from packet timing metadata.",
+            "succeeded_unprotected": True,
+            "detected_protected": False,
+            "detection_mechanism": "⚠ Residual risk — requires traffic shaping",
+            "severity": "MEDIUM",
+            "attacker_result": "r=0.82 (strong correlation)",
+            "defender_action": "DP/HE protect values, not metadata",
+        },
+    ]
+
+
+def s_security_metrics(sec: "_SecurityState", df, sel_m: List[str]):
+    """Charts: event timeline, anomaly scores, auth failures, attack radar."""
+    counts = sec.counts()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.plotly_chart(
+            chart_attack_timeline(sec.events),
+            width="stretch",
+            config={"displayModeBar": False},
+        )
+    with c2:
+        st.plotly_chart(
+            chart_attack_radar(counts),
+            width="stretch",
+            config={"displayModeBar": False},
+        )
+
+    c3, c4 = st.columns(2)
+    with c3:
+        st.plotly_chart(
+            chart_anomaly_scores(sec, sel_m),
+            width="stretch",
+            config={"displayModeBar": False},
+        )
+    with c4:
+        st.plotly_chart(
+            chart_auth_failures(sec), width="stretch", config={"displayModeBar": False}
+        )
+
+
+def s_suspicious_meters(sec: "_SecurityState", df):
+    """Table of most suspicious meters based on event counts."""
+    _sec2("🔍", "SUSPICIOUS METER DETECTION", "BEHAVIORAL ANALYSIS")
+    meter_risk: Dict[str, Dict] = {}
+    for ev in sec.events:
+        mid = ev.get("meter_id", "unknown")
+        if mid not in meter_risk:
+            meter_risk[mid] = {"CRITICAL": 0, "WARNING": 0, "INFO": 0, "total": 0}
+        meter_risk[mid][ev.get("severity", "INFO")] += 1
+        meter_risk[mid]["total"] += 1
+
+    if not meter_risk:
+        st.markdown(
+            f'<div style="color:{P["text_dim"]};font-size:.8rem;">No suspicious activity detected yet.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    rows = []
+    for mid, counts in sorted(
+        meter_risk.items(), key=lambda x: x[1]["CRITICAL"], reverse=True
+    )[:10]:
+        c_cnt = counts["CRITICAL"]
+        w_cnt = counts["WARNING"]
+        risk = (
+            "🔴 CRITICAL"
+            if c_cnt >= 2
+            else (
+                "🟠 HIGH" if c_cnt >= 1 else ("🟡 MEDIUM" if w_cnt >= 2 else "🟢 LOW")
+            )
+        )
+        z_vals = sec.anomaly_scores.get(mid, [0])
+        max_z = max(z_vals) if z_vals else 0.0
+        rows.append(
+            {
+                "Meter": mid,
+                "Risk": risk,
+                "Critical": c_cnt,
+                "Warnings": w_cnt,
+                "Max Z-Score": round(max_z, 2),
+                "Auth Fails": sec.auth_failures.get(mid, 0),
+            }
+        )
+
+    import pandas as pd
+
+    df_risk = pd.DataFrame(rows)
+    st.dataframe(
+        df_risk,
+        use_container_width=True,
+        height=260,
+        hide_index=True,
+        column_config={
+            "Meter": st.column_config.TextColumn("Meter ID"),
+            "Risk": st.column_config.TextColumn("Risk Level"),
+            "Critical": st.column_config.NumberColumn("🔴 Critical"),
+            "Warnings": st.column_config.NumberColumn("🟠 Warnings"),
+            "Max Z-Score": st.column_config.NumberColumn("Max Z", format="%.2f"),
+            "Auth Fails": st.column_config.NumberColumn("Auth Fails"),
+        },
+    )
+
+
+def s_privacy_indicator(sec: "_SecurityState"):
+    """Privacy risk indicator based on epsilon and attack history."""
+    _sec2("🛡", "PRIVACY RISK INDICATOR", "DP + HE STATUS")
+    noise = st.session_state.get("noise", 0.08)
+    eps = round(1.0 / max(noise, 1e-4), 2)
+    inf_cnt = sum(1 for e in sec.events if e.get("event_type") == "INFERENCE")
+
+    # Privacy score: 0=worst, 100=best
+    eps_score = max(0, min(100, int(100 - eps * 8)))
+    inf_score = max(0, 100 - inf_cnt * 15)
+    priv_score = int((eps_score + inf_score) / 2)
+    priv_color = (
+        P["green2"]
+        if priv_score >= 70
+        else (P["amber2"] if priv_score >= 40 else P["crimson2"])
+    )
+    priv_label = (
+        "STRONG" if priv_score >= 70 else ("MODERATE" if priv_score >= 40 else "WEAK")
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🔐 DP Privacy Score", f"{priv_score}/100", delta=priv_label)
+    c2.metric("ε (Privacy Budget)", f"{eps}", delta="Lower = more private")
+    c3.metric("🔑 HE Scheme", "CKKS", delta="Enc(a)⊕Enc(b)=Enc(a+b)")
+    c4.metric(
+        "🕵 Inference Attempts",
+        str(inf_cnt),
+        delta="All disrupted by DP" if inf_cnt else "None detected",
+    )
+
+    # Privacy explanation
+    st.markdown(
+        f"""
+    <div class="sec-panel" style="margin-top:.6rem;">
+      <div style="display:flex;gap:2rem;flex-wrap:wrap;align-items:center;">
+        <div style="text-align:center;min-width:100px;">
+          <div style="font-family:'Orbitron',sans-serif;font-size:2rem;font-weight:700;color:{priv_color};">{priv_score}</div>
+          <div style="font-family:'Share Tech Mono',monospace;font-size:.6rem;color:{priv_color};letter-spacing:.15em;">{priv_label} PRIVACY</div>
+        </div>
+        <div style="flex:1;">
+          <div style="font-size:.78rem;color:{P["text_dim"]};line-height:1.65;">
+            <strong style="color:{P["cyan2"]};">Differential Privacy</strong> adds Laplace noise Lap(0, Δf/ε) to every published reading — 
+            preventing inference attacks even against an unbounded adversary.<br>
+            <strong style="color:{P["purple2"]};">Homomorphic Encryption</strong> (CKKS) ensures the aggregation server 
+            computes <code>Enc(Σ eᵢ)</code> without ever decrypting individual readings.
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:.3rem;">
+          <span class="stat-pill" style="color:{P["green2"]};">✓ DP active (ε={eps})</span>
+          <span class="stat-pill" style="color:{P["purple2"]};">✓ CKKS encrypted</span>
+          <span class="stat-pill" style="color:{P["blue2"]};">✓ HMAC-SHA-256 signing</span>
+          <span class="stat-pill" style="color:{P["amber2"]};">✓ Nonce replay guard</span>
+        </div>
+      </div>
+    </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def s_simulation_controls(sec: "_SecurityState", sel_m: List[str]):
+    """Interactive attack simulation launcher."""
+    _sec2("🎮", "ATTACK SIMULATION LAUNCHER", "RUN INDIVIDUAL ATTACKS")
+    st.markdown(
+        f'<p style="font-size:.8rem;color:{P["text_dim"]};margin-bottom:.8rem;">Click any button to simulate that attack. The security system will detect and log it in real time.</p>',
+        unsafe_allow_html=True,
+    )
+    import random
+
+    meter = random.choice(sel_m[:10]) if sel_m else "meter_000"
+
+    cols = st.columns(4)
+    with cols[0]:
+        if st.button("🔁 Replay Attack", key="sim_replay", use_container_width=True):
+            sec.simulate_attack("REPLAY", meter)
+            st.toast("🔴 Replay attack simulated!", icon="🔁")
+    with cols[1]:
+        if st.button("✏️ Data Tampering", key="sim_tamper", use_container_width=True):
+            sec.simulate_attack("TAMPER", meter)
+            st.toast("🔴 Tampering attack simulated!", icon="✏️")
+    with cols[2]:
+        if st.button("🕵️ MITM Attack", key="sim_mitm", use_container_width=True):
+            sec.simulate_attack("MITM", meter)
+            st.toast("🔴 MITM attack simulated!", icon="🕵️")
+    with cols[3]:
+        if st.button("🔑 Auth Failure", key="sim_auth", use_container_width=True):
+            sec.simulate_attack("AUTH_FAIL", meter)
+            st.toast("🟠 Auth failure simulated!", icon="🔑")
+
+    cols2 = st.columns(4)
+    with cols2[0]:
+        if st.button(
+            "📈 Anomaly Injection", key="sim_anomaly", use_container_width=True
+        ):
+            sec.simulate_attack("ANOMALY", meter)
+            st.toast("🟠 Anomaly injected!", icon="📈")
+    with cols2[1]:
+        if st.button("🔍 Inference Attack", key="sim_infer", use_container_width=True):
+            sec.simulate_attack("INFERENCE", meter)
+            st.toast("🟣 Inference attack simulated!", icon="🔍")
+    with cols2[2]:
+        if st.button("🌊 Rate Limit Flood", key="sim_rate", use_container_width=True):
+            sec.simulate_attack("RATE_LIMIT", meter)
+            st.toast("🟠 Rate limit triggered!", icon="🌊")
+    with cols2[3]:
+        if st.button("💣 Run All Attacks", key="sim_all", use_container_width=True):
+            for t in [
+                "REPLAY",
+                "TAMPER",
+                "MITM",
+                "AUTH_FAIL",
+                "ANOMALY",
+                "INFERENCE",
+                "RATE_LIMIT",
+            ]:
+                sec.simulate_attack(
+                    t, random.choice(sel_m[:10]) if sel_m else "meter_000"
+                )
+            st.toast("🚨 Full attack barrage simulated!", icon="💣")
+
+    # Auto-inject random events during live simulation
+    if st.session_state.get("simulating", False):
+        if random.random() < 0.3:
+            random_types = ["ANOMALY", "AUTH_FAIL", "RATE_LIMIT", "REPLAY"]
+            sec.simulate_attack(
+                random.choice(random_types),
+                random.choice(sel_m[:10]) if sel_m else "meter_000",
+            )
+
+
+def _sec2(icon, title, badge=""):
+    """Section header variant for security panel."""
+    b = f'<span class="sec-badge">{badge}</span>' if badge else ""
+    st.markdown(
+        f'<div class="sec-hdr">'
+        f'<span class="sec-icon">{icon}</span>'
+        f'<span class="sec-title" style="color:#ef4444;">{title}</span>{b}'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ── Enhanced main() — all original sections + security panel ──
+
+
 def main():
     st.markdown(_css(), unsafe_allow_html=True)
-    init_state()
+    st.markdown(_sec_css(), unsafe_allow_html=True)
+    _init_state()
+    sec = _init_security()
+
     sel_m, sel_r, t_range, noise = render_sidebar(st.session_state.df)
 
+    # ── Live simulation tick ──
     if st.session_state.simulating:
         st.session_state.df = append_tick(st.session_state.df, noise=noise)
         st.session_state.tick += 1
         if len(st.session_state.df) > 20 * 400:
             st.session_state.df = st.session_state.df.iloc[-20 * 300 :]
+        # Log a few OK events during live run
+        import random as _r
 
+        if _r.random() < 0.4:
+            mid = _r.choice(sel_m[:5]) if sel_m else "meter_000"
+            sec.add_event(
+                "INFO", "OK", mid, f"Reading accepted (z=0.{_r.randint(10, 90)})"
+            )
+        # Occasional random attack event
+        s_simulation_controls(sec, sel_m)  # also fires random events
+        s_simulation_controls.__doc__  # no-op to keep reference
+
+    # ── Filter ──
     df_all = st.session_state.df
     mask = (
         df_all["meter_id"].isin(sel_m)
@@ -1150,6 +1982,9 @@ def main():
         st.warning("⚠ No data matches current filters — adjust the sidebar.")
         return
 
+    # ═══════════════════════════════════════════════════════════
+    # ORIGINAL SECTIONS (unchanged)
+    # ═══════════════════════════════════════════════════════════
     s_hero(st.session_state.simulating)
     st.markdown("---")
     s_kpis(df)
@@ -1167,8 +2002,70 @@ def main():
     s_attack(df, sel_m)
     st.markdown("---")
     s_advanced(df, sel_m)
+
+    # ═══════════════════════════════════════════════════════════
+    # ▼ NEW: CYBER SECURITY MONITORING PANEL
+    # ═══════════════════════════════════════════════════════════
+    st.markdown("---")
     st.markdown(
-        f"""<hr><div style="text-align:center;font-family:'Share Tech Mono',monospace;font-size:.6rem;color:{P["text_dim"]};padding:.5rem 0 2rem;letter-spacing:.07em;">⚡ SECUREGRID RESEARCH DASHBOARD · Hybrid HE + DP Smart Grid Aggregation · Streamlit + Plotly</div>""",
+        f"""
+    <div style="background:linear-gradient(135deg,#0a0510,#10050a);border:1px solid #3a0f1a;
+                border-top:2px solid #ef4444;border-radius:16px;padding:1.8rem 2.4rem;
+                margin-bottom:1.2rem;position:relative;overflow:hidden;">
+      <div style="position:absolute;top:0;left:0;right:0;height:1px;
+                  background:linear-gradient(90deg,transparent,rgba(239,68,68,.7),transparent);"></div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:.62rem;letter-spacing:.3em;
+                  color:#ef4444;text-transform:uppercase;margin-bottom:.4rem;">
+        ⚡ CYBER THREAT INTELLIGENCE
+      </div>
+      <div style="font-family:'Orbitron',sans-serif;font-size:1.55rem;font-weight:700;
+                  color:{P["text"]};letter-spacing:.04em;">
+        <span style="color:#ef4444;">Real-Time</span> Security Monitor
+      </div>
+      <div style="font-size:.85rem;color:{P["text_mid"]};margin:.4rem 0 .9rem;max-width:650px;">
+        Live cyber-attack detection, HMAC integrity verification, replay prevention,
+        differential privacy protection, and anomaly-based intrusion detection.
+      </div>
+    </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # Threat level banner
+    s_threat_banner(sec)
+
+    # Row 1: Live alerts + Attack simulation launcher
+    c_left, c_right = st.columns([3, 2])
+    with c_left:
+        s_live_alerts(sec)
+    with c_right:
+        s_simulation_controls(sec, sel_m)
+
+    st.markdown("---")
+
+    # Row 2: Charts
+    s_security_metrics(sec, df, sel_m)
+
+    st.markdown("---")
+
+    # Row 3: Suspicious meters + Privacy indicator
+    s_suspicious_meters(sec, df)
+
+    st.markdown("---")
+    s_privacy_indicator(sec)
+
+    st.markdown("---")
+
+    # Attack simulation results
+    s_attack_results(sec)
+
+    # Footer
+    st.markdown(
+        f"""
+    <hr>
+    <div style="text-align:center;font-family:'Share Tech Mono',monospace;font-size:.6rem;
+                color:{P["text_dim"]};padding:.5rem 0 2rem;letter-spacing:.07em;">
+      ⚡ SECUREGRID RESEARCH DASHBOARD · Hybrid HE + DP · Real-Time Cyber Security Monitor · Streamlit + Plotly
+    </div>""",
         unsafe_allow_html=True,
     )
 
