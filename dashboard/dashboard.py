@@ -1946,7 +1946,7 @@ def _sec2(icon, title, badge=""):
 def main():
     st.markdown(_css(), unsafe_allow_html=True)
     st.markdown(_sec_css(), unsafe_allow_html=True)
-    _init_state()
+    init_state()
     sec = _init_security()
 
     sel_m, sel_r, t_range, noise = render_sidebar(st.session_state.df)
